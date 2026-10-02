@@ -86,7 +86,7 @@ You normally **do not need to install these packages manually**.
 
 ---
 
-# 4. Running Embedded Notebook
+# 4. Linux Installation
 
 Choose the instructions for your operating system.
 
@@ -153,40 +153,31 @@ After setup, start Embedded Notebook from your application drawer.
 
 ---
 
-# 5. Windows
+# 5. Windows Installation
 
-## Step 1 — Open the project folder
+### Requirements
 
-Open the folder containing:
+Install Python 3 and ensure `python` is available in `PATH`. An internet connection is required to install Python dependencies.
 
-```text
-Embedded_Notebook.bat
-embedded_notebook2.py
-requirements.txt
-```
+### Step 1 — Open the project folder
 
-## Step 2 — Start Embedded Notebook
+Extract the project and open the folder containing `Embedded_Notebook.bat`, `embedded_notebook2.py`, and `requirements.txt`.
 
-Double-click:
+### Step 2 — Run the setup script
 
-```text
-Embedded_Notebook.bat
-```
-
-Alternatively, open Command Prompt in the project directory and run:
+Double-click `Embedded_Notebook.bat`, or run it from Command Prompt:
 
 ```bat
 Embedded_Notebook.bat
 ```
 
-The launcher automatically:
+The script creates `.venv` if needed, installs/updates the requirements, and creates a desktop shortcut. It uses the project's virtual environment and `arduino.ico` for the shortcut icon when available.
 
-1. Finds the project directory.
-2. Creates `.venv` if required.
-3. Installs/updates the Python requirements.
-4. Starts Embedded Notebook using the local virtual environment.
+### Step 3 — Launch Embedded Notebook
 
-You do **not** need to activate `.venv` manually.
+When setup completes, open **Embedded Notebook** from the desktop shortcut. The batch file performs setup only; it does not launch the application directly. You do not need to activate `.venv` manually.
+
+Run the batch file again if you need to refresh dependencies or recreate the shortcut.
 
 ---
 
@@ -721,9 +712,7 @@ bash Embedded_Notebook.sh
 
 ### Windows
 
-```text
-Double-click Embedded_Notebook.bat
-```
+Run `Embedded_Notebook.bat` once to set up the local environment and create the desktop shortcut. Then launch **Embedded Notebook** from that shortcut.
 
 Then:
 
