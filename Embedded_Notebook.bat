@@ -37,16 +37,43 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Run the Python script
-echo.
-echo Running Python script...
-echo.
+REM Determine Python executable (use pythonw.exe to run without a background console window)
+set "PYTHON_EXEC=%VENV%\Scripts\pythonw.exe"
+if not exist "%PYTHON_EXEC%" (
+    set "PYTHON_EXEC=%VENV%\Scripts\python.exe"
+)
 
-"%VENV%\Scripts\python.exe" "%WORK_DIR%\embedded_notebook2.py"
+set "TARGET_SCRIPT=%WORK_DIR%\embedded_notebook2.py"
+set "ICON_FILE=%WORK_DIR%\arduino.ico"
+set "SHORTCUT_NAME=Embedded Notebook.lnk"
+
+REM Create desktop shortcut
+echo.
+echo Creating desktop shortcut...
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$ws = New-Object -ComObject WScript.Shell; " ^
+    "$desktop = [Environment]::GetFolderPath('Desktop'); " ^
+    "$shortcutPath = Join-Path $desktop $env:SHORTCUT_NAME; " ^
+    "$s = $ws.CreateShortcut($shortcutPath); " ^
+    "$s.TargetPath = $env:PYTHON_EXEC; " ^
+    "$s.Arguments = '\""' + $env:TARGET_SCRIPT + '\""'; " ^
+    "$s.WorkingDirectory = $env:WORK_DIR; " ^
+    "$s.Description = 'Embedded Notebook'; " ^
+    "if (Test-Path $env:ICON_FILE) { $s.IconLocation = $env:ICON_FILE; } " ^
+    "$s.Save(); " ^
+    "Write-Host ('Desktop shortcut created: ' + $shortcutPath)"
 
 if errorlevel 1 (
     echo.
-    echo Python program exited with an error.
+    echo ERROR: Failed to create desktop shortcut.
+    pause
+    exit /b 1
 )
 
+echo.
+echo Setup completed successfully!
+echo You can now launch Embedded Notebook from the desktop shortcut.
+echo.
 pause
+
