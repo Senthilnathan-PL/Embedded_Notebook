@@ -1,0 +1,5 @@
+.venv/
+.embedded/
+__pycache__/
+*.mkv
+*.zip
