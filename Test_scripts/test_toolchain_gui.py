@@ -4,7 +4,11 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 tmp = tempfile.mkdtemp(); os.environ["XDG_CONFIG_HOME"] = tmp; os.environ["HOME"] = tmp
 sys.argv = ["x"]
 from PySide6.QtWidgets import QApplication, QMessageBox
-_spec = importlib.util.spec_from_file_location("en", pathlib.Path(__file__).with_name("embedded_notebook2.py"))
+from PySide6.QtGui import QKeyEvent
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent if pathlib.Path(__file__).resolve().parent.name == "Test_scripts" else pathlib.Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+_spec = importlib.util.spec_from_file_location("en", PROJECT_ROOT / "embedded_notebook2.py")
 en = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(en)
 app = QApplication([]); app.setStyle("Fusion"); en.apply_theme(app, "Light")
 asked = []
@@ -358,6 +362,134 @@ check("G23 Auto rethemes open manager cards",
 	  and "#A9BCBC" in board_title.text()
 	  and "#A9BCBC" in library_title.text())
 w._on_system_color_scheme_changed(en.Qt.ColorScheme.Light)
+# Test G24: Auto-indentation in CodeEditor
+editor = w.notebook.cells[0].editor
+editor.setPlainText("void setup() {\n  int x = 1;\n}")
+cursor = editor.textCursor()
+# Simulate Enter inside indented block after line 2
+cursor.movePosition(en.QTextCursor.Start)
+cursor.movePosition(en.QTextCursor.Down)
+cursor.movePosition(en.QTextCursor.EndOfLine)
+editor.setTextCursor(cursor)
+key_event = QKeyEvent(en.QEvent.KeyPress, en.Qt.Key_Return, en.Qt.NoModifier, "\n")
+editor.keyPressEvent(key_event)
+line2_text = editor.toPlainText().split("\n")[2]
+check("G24a Auto-indent preserves indentation level on Enter", line2_text.startswith("  "))
+
+# Simulate Enter between brackets: "void test() {}"
+editor.setPlainText("void test() {}")
+cursor = editor.textCursor()
+cursor.setPosition(editor.toPlainText().index("}"))
+editor.setTextCursor(cursor)
+editor.keyPressEvent(key_event)
+expected_bracket_text = "void test() {\n  \n}"
+check("G24b Auto-indent expands newline between brackets with indented middle line",
+      editor.toPlainText() == expected_bracket_text and editor.textCursor().position() == len("void test() {\n  "))
+
+# Test G25: Comment and uncomment toggling
+editor.setPlainText("int a = 1;\nint b = 2;\nint c = 3;")
+cursor = editor.textCursor()
+cursor.movePosition(en.QTextCursor.Start)
+cursor.movePosition(en.QTextCursor.EndOfLine, en.QTextCursor.KeepAnchor)
+editor.setTextCursor(cursor)
+editor.toggle_comment()
+check("G25a Single-line comment toggle comments line", editor.toPlainText().startswith("// int a = 1;"))
+editor.toggle_comment()
+check("G25b Single-line comment toggle uncomments line", editor.toPlainText().startswith("int a = 1;"))
+
+# Multi-line comment toggle
+cursor.select(en.QTextCursor.Document)
+editor.setTextCursor(cursor)
+editor.toggle_comment()
+all_commented = all(l.startswith("// ") for l in editor.toPlainText().split("\n"))
+check("G25c Multi-line comment toggles comment on all lines", all_commented)
+editor.toggle_comment()
+none_commented = not any(l.startswith("// ") for l in editor.toPlainText().split("\n"))
+check("G25d Multi-line comment toggles uncomment when all are commented", none_commented)
+
+# Test G26: Undo and Redo
+editor.undo()
+check("G26a Undo restores previous commented state", all(l.startswith("// ") for l in editor.toPlainText().split("\n")))
+editor.redo()
+check("G26b Redo restores uncommented state", not any(l.startswith("// ") for l in editor.toPlainText().split("\n")))
+
+# Test G27: Autocomplete brackets and quotes
+def type_char(ed, char):
+    evt = QKeyEvent(en.QEvent.KeyPress, 0, en.Qt.NoModifier, char)
+    ed.keyPressEvent(evt)
+
+def press_backspace(ed):
+    evt = QKeyEvent(en.QEvent.KeyPress, en.Qt.Key_Backspace, en.Qt.NoModifier)
+    ed.keyPressEvent(evt)
+
+editor.setPlainText("")
+type_char(editor, "(")
+check("G27a Autocomplete () and cursor placed between",
+      editor.toPlainText() == "()" and editor.textCursor().position() == 1)
+
+type_char(editor, ")")
+check("G27b Overtype / skip-over closing parenthesis",
+      editor.toPlainText() == "()" and editor.textCursor().position() == 2)
+
+editor.setPlainText("")
+type_char(editor, "[")
+check("G27c Autocomplete [] and cursor placed between",
+      editor.toPlainText() == "[]" and editor.textCursor().position() == 1)
+
+editor.setPlainText("")
+type_char(editor, "{")
+check("G27d Autocomplete {} and cursor placed between",
+      editor.toPlainText() == "{}" and editor.textCursor().position() == 1)
+
+editor.setPlainText("")
+type_char(editor, '"')
+check("G27e Autocomplete double quotes and cursor placed between",
+      editor.toPlainText() == '""' and editor.textCursor().position() == 1)
+
+type_char(editor, '"')
+check("G27f Overtype / skip-over closing double quote",
+      editor.toPlainText() == '""' and editor.textCursor().position() == 2)
+
+editor.setPlainText("")
+type_char(editor, "'")
+check("G27g Autocomplete single quotes and cursor placed between",
+      editor.toPlainText() == "''" and editor.textCursor().position() == 1)
+
+type_char(editor, "'")
+check("G27h Overtype / skip-over closing single quote",
+      editor.toPlainText() == "''" and editor.textCursor().position() == 2)
+
+editor.setPlainText("")
+type_char(editor, "(")
+press_backspace(editor)
+check("G27i Backspace between matching pair deletes both characters", editor.toPlainText() == "")
+
+# Test G28: Comment from cursor position and from selected first word
+editor.setPlainText("int a = 1; int b = 2;")
+cur = editor.textCursor()
+cur.setPosition(editor.toPlainText().index("int b"))
+editor.setTextCursor(cur)
+editor.toggle_comment()
+check("G28a Single-line comment starts only from cursor position",
+      editor.toPlainText() == "int a = 1; // int b = 2;")
+
+editor.toggle_comment()
+check("G28b Single-line uncomment restores original text",
+      editor.toPlainText() == "int a = 1; int b = 2;")
+
+editor.setPlainText("void setup() { int x = 1;\n  int y = 2;\n}")
+cur = editor.textCursor()
+cur.setPosition(editor.toPlainText().index("int x"))
+cur.setPosition(editor.toPlainText().index("}") - 1, en.QTextCursor.KeepAnchor)
+editor.setTextCursor(cur)
+editor.toggle_comment()
+check("G28c Multi-line comment starts on first line only from selected first word",
+      editor.toPlainText() == "void setup() { // int x = 1;\n  // int y = 2;\n}")
+
+editor.toggle_comment()
+check("G28d Multi-line uncomment restores original lines",
+      editor.toPlainText() == "void setup() { int x = 1;\n  int y = 2;\n}")
+
 boards_dialog.close(); library_dialog.close()
 if library_dialog.worker is not None: library_dialog.worker.wait(1000)
 if boards_dialog.worker is not None: boards_dialog.worker.wait(1000)

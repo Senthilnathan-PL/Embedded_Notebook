@@ -1,6 +1,11 @@
 import json, os, sys, tempfile, stat
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+
+# Resolve project root dynamically (works from repo root, Test_scripts/, or any CWD)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent if Path(__file__).resolve().parent.name == "Test_scripts" else Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import embedded_toolchain as et
 
 results = []

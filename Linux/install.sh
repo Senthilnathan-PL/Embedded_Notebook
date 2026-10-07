@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV="$WORK_DIR/.venv"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve project root (parent directory of Linux/, or SCRIPT_DIR if run from root)
+if [[ -f "$SCRIPT_DIR/requirements.txt" ]]; then
+    PROJECT_ROOT="$SCRIPT_DIR"
+else
+    PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
+
+VENV="$PROJECT_ROOT/.venv"
 
 if ! command -v python3 >/dev/null 2>&1; then
     printf 'Python 3 is required to set up Embedded Notebook.\n' >&2
@@ -15,7 +22,7 @@ if [[ ! -x "$VENV/bin/python" ]]; then
 fi
 
 printf 'Installing/updating Python requirements...\n'
-"$VENV/bin/python" -m pip install -r "$WORK_DIR/requirements.txt"
+"$VENV/bin/python" -m pip install -r "$PROJECT_ROOT/requirements.txt"
 
 APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP_FILE="$APPLICATIONS_DIR/embedded-notebook.desktop"
@@ -30,7 +37,16 @@ desktop_quote() {
 }
 
 PYTHON_EXEC="$(desktop_quote "$VENV/bin/python")"
-APP_EXEC="$(desktop_quote "$WORK_DIR/embedded_notebook2.py")"
+if [[ -f "$PROJECT_ROOT/embedded_notebook2.py" ]]; then
+    APP_EXEC="$(desktop_quote "$PROJECT_ROOT/embedded_notebook2.py")"
+else
+    APP_EXEC="$(desktop_quote "$PROJECT_ROOT/scripts/main.py")"
+fi
+
+ICON_PATH="$PROJECT_ROOT/arduino.png"
+if [[ ! -f "$ICON_PATH" && -f "$SCRIPT_DIR/arduino.png" ]]; then
+    ICON_PATH="$SCRIPT_DIR/arduino.png"
+fi
 
 cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
@@ -39,8 +55,8 @@ Type=Application
 Name=Embedded Notebook
 Comment=Arduino-style notebook for programming microcontrollers
 Exec=$PYTHON_EXEC $APP_EXEC
-Path=$WORK_DIR
-Icon=$WORK_DIR/arduino.png
+Path=$PROJECT_ROOT
+Icon=$ICON_PATH
 Terminal=false
 Categories=Development;Electronics;
 StartupNotify=true

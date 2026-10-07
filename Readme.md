@@ -31,15 +31,36 @@ After extracting the project, you should have something similar to:
 ```text
 Embedded_Notebook/
 │
-├── Embedded_Notebook.sh          # Linux launcher
-├── Embedded_Notebook.bat         # Windows launcher
+├── Linux/
+│   ├── install.sh                # Linux launcher & desktop installer
+│   ├── uninstall.sh              # Linux uninstaller
+│   └── arduino.png               # Application icon
 │
-├── embedded_notebook2.py         # Main application
-├── embedded_toolchain.py         # MCU/toolchain management
+├── Windows/
+│   ├── install.bat               # Windows launcher & installer
+│   ├── uninstall.bat             # Windows uninstaller
+│   └── arduino.ico               # Application icon
+│
+├── Test_scripts/
+│   ├── test_toolchain.py         # Toolchain test suite
+│   └── test_toolchain_gui.py     # GUI and editor test suite
+│
+├── Example Notebooks/
+│   ├── lesson1_blink_to_button.ipynb
+│   └── dasai_mochi_animation_lab_nodemcu.ipynb
+│
+├── scripts/                      # Modular application package
+│   ├── main.py                   # Application entry point
+│   ├── main_window.py            # Main window and GUI
+│   ├── editor.py                 # Editor and syntax highlighter
+│   ├── cells.py                  # Notebook cells
+│   ├── dialogs.py                # Manager and tool dialogs
+│   ├── toolchain.py              # MCU toolchain backend
+│   └── ...
+│
+├── embedded_notebook2.py         # Application facade launcher
+├── embedded_toolchain.py         # Toolchain facade
 ├── requirements.txt              # Python dependencies
-│
-├── lesson1_blink_to_button.ipynb # Example lesson
-│
 └── .venv/                        # Created automatically
 ```
 
@@ -109,7 +130,7 @@ cd ~/Embedded_Notebook
 Run:
 
 ```bash
-bash Embedded_Notebook.sh
+bash Linux/install.sh
 ```
 
 The setup script will:
@@ -128,7 +149,7 @@ activate the environment or run Python yourself.
 You can also run:
 
 ```bash
-./Embedded_Notebook.sh
+./Linux/install.sh
 ```
 
 If Linux says:
@@ -140,16 +161,24 @@ Permission denied
 make it executable:
 
 ```bash
-chmod +x Embedded_Notebook.sh
+chmod +x Linux/install.sh
 ```
 
 Then run the setup script once:
 
 ```bash
-./Embedded_Notebook.sh
+./Linux/install.sh
 ```
 
 After setup, start Embedded Notebook from your application drawer.
+
+### Uninstalling the desktop app
+
+To completely remove everything installed by `Linux/install.sh` (desktop launcher, `.venv` virtual environment, `.embedded` toolchains, and settings):
+
+```bash
+bash Linux/uninstall.sh
+```
 
 ---
 
@@ -157,12 +186,13 @@ After setup, start Embedded Notebook from your application drawer.
 
 ## Step 1 — Open the project folder
 
-Open the folder containing:
+Open the folder containing the project files, or navigate to `Windows\`:
 
 ```text
-Embedded_Notebook.bat
-embedded_notebook2.py
-requirements.txt
+Windows\
+├── install.bat
+├── uninstall.bat
+└── arduino.ico
 ```
 
 ## Step 2 — Start Embedded Notebook
@@ -170,13 +200,13 @@ requirements.txt
 Double-click:
 
 ```text
-Embedded_Notebook.bat
+Windows\install.bat
 ```
 
 Alternatively, open Command Prompt in the project directory and run:
 
 ```bat
-Embedded_Notebook.bat
+Windows\install.bat
 ```
 
 The launcher automatically:
@@ -187,6 +217,16 @@ The launcher automatically:
 4. Starts Embedded Notebook using the local virtual environment.
 
 You do **not** need to activate `.venv` manually.
+
+### Uninstalling on Windows
+
+To completely remove everything (user settings, `.venv` virtual environment, `.embedded` toolchains, and all project files):
+
+Double-click `Windows\uninstall.bat` or run:
+
+```bat
+Windows\uninstall.bat
+```
 
 ---
 
@@ -716,13 +756,13 @@ If everything is already installed:
 ### Linux
 
 ```bash
-bash Embedded_Notebook.sh
+bash Linux/install.sh
 ```
 
 ### Windows
 
 ```text
-Double-click Embedded_Notebook.bat
+Double-click Windows\install.bat
 ```
 
 Then:
@@ -771,4 +811,33 @@ It introduces the basic idea of using multiple cells, dependencies, Arduino-styl
 
 Once you understand the lesson, create your own notebook and experiment with sensors, LEDs, buttons, motors, serial communication, and other embedded hardware.
 
+---
+
+# 22. Running Tests
+
+The test suites are located in `Test_scripts/` and can be run from the repository root or from within the `Test_scripts/` folder using Python:
+
+### Toolchain Backend Tests (58 tests)
+
+```bash
+python -m unittest Test_scripts/test_toolchain.py
+```
+
+### GUI, Editor, and Hotkey Tests (72 tests)
+
+Run in headless / offscreen mode:
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m unittest Test_scripts/test_toolchain_gui.py
+```
+
+### Running All Tests Together
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m unittest discover -s Test_scripts -p "test_*.py"
+```
+
+---
+
 **Happy making!**
+
