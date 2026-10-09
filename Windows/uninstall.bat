@@ -38,11 +38,21 @@ if "%FORCE%"=="0" (
 echo.
 echo Uninstalling Embedded Notebook...
 
-REM 1. Remove desktop shortcut
+REM 1. Remove desktop items
+set "DESK_BAT=%USERPROFILE%\Desktop\Embedded Notebook.bat"
+if exist "%DESK_BAT%" (
+    echo Removing desktop bat file...
+    del /f /q "%DESK_BAT%" 2>nul
+)
 set "DESK_SHORTCUT=%USERPROFILE%\Desktop\Embedded Notebook.lnk"
 if exist "%DESK_SHORTCUT%" (
     echo Removing desktop shortcut...
     del /f /q "%DESK_SHORTCUT%" 2>nul
+)
+set "DESK_FOLDER=%USERPROFILE%\Desktop\Embedded Notebook"
+if exist "%DESK_FOLDER%" (
+    echo Removing desktop app folder...
+    rd /s /q "%DESK_FOLDER%" 2>nul
 )
 
 REM 2. Remove user settings
