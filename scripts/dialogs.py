@@ -2,34 +2,26 @@
 FindBar, SourceDialog, ToolchainManagerDialog, LibraryManagerDialog, and BoardsManagerDialog.
 """
 from html import escape
-import os
 import re
-import shutil
-from pathlib import Path
 
 from PySide6.QtCore import (
-    QEvent, QPointF, QRect, QSettings, QSize, QThread, QTimer, Qt, Signal,
+    QSize, QThread, QTimer, Qt, Signal,
 )
 from PySide6.QtGui import (
-    QAction, QColor, QFont, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap, QShortcut,
-    QTextCharFormat, QTextCursor,
+    QKeySequence, QShortcut, QTextCursor,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
-    QPlainTextEdit, QPushButton, QProgressBar, QScrollArea, QSplitter, QTabWidget,
-    QTextEdit, QToolButton, QVBoxLayout, QWidget,
+    QPlainTextEdit, QPushButton, QProgressBar, QSplitter, QTabWidget,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 
 import scripts.toolchain as tc
 from scripts.common import qt_pos_fn
 from scripts.editor import CodeEditor, CppHighlighter
-from scripts.cells import replace_in_document, apply_find_highlights, CodeCell
 from scripts.theme import (
-    ACCENT_TEXT, BAR, BG, BORDER, CURRENT_THEME, DIS_BORDER, DIS_FG, DIS_ROUND,
-    FAINT, FIND_ALL, FIND_CUR, FIND_FG, HOVER1, HOVER2, LOG_BG, LOG_FG, MUTED,
-    ORANGE, RUN_ACCENT, RUN_GREEN, SCROLL, SEL, SURFACE, TEAL, TEAL_DARK, TEAL_HOVER,
-    TEXT, THEMES, WARN, make_icon,
+    BORDER, MUTED, TEAL_HOVER, WARN,
 )
 
 class FindBar(QWidget):
@@ -783,6 +775,8 @@ class LibraryManagerDialog(QDialog):
         elif operation in ("install", "remove"):
             self.status_label.setText("Library installed" if operation == "install" else "Library removed")
             self.refresh_installed()
+            if self.parent() and hasattr(self.parent(), "populate_examples_menu"):
+                self.parent().populate_examples_menu()
 
     def retheme(self):
         self._populate_list(self.results, self.search_results)
@@ -794,6 +788,8 @@ class LibraryManagerDialog(QDialog):
             self.status_label.setText("Please wait for the current library operation to finish")
             event.ignore()
             return
+        if self.parent() and hasattr(self.parent(), "populate_examples_menu"):
+            self.parent().populate_examples_menu()
         super().closeEvent(event)
 
 
@@ -1142,6 +1138,10 @@ class BoardsManagerDialog(QDialog):
             self.status_label.setText("Board platform installed" if operation == "install"
                                       else "Board platform removed")
             self.refresh_installed()
+            if self.parent() and hasattr(self.parent(), "refresh_boards"):
+                self.parent().refresh_boards()
+                if hasattr(self.parent(), "update_target_status"):
+                    self.parent().update_target_status()
         elif operation in ("add_url", "remove_url"):
             self.status_label.setText("Package index added" if operation == "add_url"
                                       else "Package index removed")
@@ -1166,5 +1166,9 @@ class BoardsManagerDialog(QDialog):
             self.status_label.setText("Please wait for the current board operation to finish")
             event.ignore()
             return
+        if self.parent() and hasattr(self.parent(), "refresh_boards"):
+            self.parent().refresh_boards()
+            if hasattr(self.parent(), "update_target_status"):
+                self.parent().update_target_status()
         super().closeEvent(event)
 

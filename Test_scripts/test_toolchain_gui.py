@@ -10,7 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 _spec = importlib.util.spec_from_file_location("en", PROJECT_ROOT / "embedded_notebook2.py")
 en = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(en)
-app = QApplication([]); app.setStyle("Fusion"); en.apply_theme(app, "Light")
+app = QApplication.instance() or QApplication([]); app.setStyle("Fusion"); en.apply_theme(app, "Light")
 asked = []
 QMessageBox.question = staticmethod(lambda *a, **k: asked.append(a[2]) or QMessageBox.No)
 QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.Ok)
@@ -489,6 +489,71 @@ check("G28c Multi-line comment starts on first line only from selected first wor
 editor.toggle_comment()
 check("G28d Multi-line uncomment restores original lines",
       editor.toPlainText() == "void setup() { int x = 1;\n  int y = 2;\n}")
+
+# Test G29-G32: Custom board discovery and session persistence
+pico_txt = w.env.ARDUINO_DATA / "packages" / "rp2040" / "hardware" / "rp2040" / "6.3.0" / "boards.txt"
+pico_txt.parent.mkdir(parents=True, exist_ok=True)
+pico_txt.write_text("rpipico.name=Raspberry Pi Pico\nrpipicow.name=Raspberry Pi Pico W\n", encoding="utf-8")
+test_settings = en.QSettings("EmbeddedNotebook", "EmbeddedNotebook")
+test_settings.remove("selected_board")
+w.platforms.installed_platforms = lambda: {"esp8266:esp8266": "3.1.2", "rp2040:rp2040": "6.3.0"}
+w.board_combo.clear()
+w.refresh_boards()
+combo_items = [w.board_combo.itemText(i) for i in range(w.board_combo.count())]
+check("G29 custom platform boards discovered and shown in dropdown",
+      "Raspberry Pi Pico" in combo_items and "Raspberry Pi Pico W" in combo_items)
+check("G30 first session defaults to NodeMCU 0.9",
+      w.board_combo.currentText() == "NodeMCU 0.9")
+
+w.board_combo.setCurrentText("Raspberry Pi Pico")
+check("G31 selected board persists to QSettings",
+      test_settings.value("selected_board") == "Raspberry Pi Pico")
+
+w.board_combo.clear()
+w.refresh_boards()
+check("G32 previous session board restored from settings",
+      w.board_combo.currentText() == "Raspberry Pi Pico")
+
+# Test G33-G36: Examples menu in File menu with Board and Installed Library sections
+board_lib_ex = w.env.ARDUINO_DATA / "packages" / "rp2040" / "hardware" / "rp2040" / "6.3.0" / "libraries" / "PicoExamples" / "examples" / "Blink" / "Blink.ino"
+board_lib_ex.parent.mkdir(parents=True, exist_ok=True)
+board_lib_ex.write_text("void setup(){pinMode(LED, OUTPUT);}\nvoid loop(){digitalWrite(LED, HIGH);}\n", encoding="utf-8")
+
+inst_lib_ex = w.env.ARDUINO_LIBRARIES / "MockSensor" / "examples" / "ReadSensor" / "ReadSensor.ino"
+inst_lib_ex.parent.mkdir(parents=True, exist_ok=True)
+inst_lib_ex.write_text("void setup(){Serial.begin(115200);}\nvoid loop(){Serial.println(42);}\n", encoding="utf-8")
+
+w.new_document()
+w.populate_examples_menu()
+file_menu = next(action.menu() for action in w.menuBar().actions() if action.text() == "&File")
+file_action_texts = [a.text() for a in file_menu.actions()]
+check("G33 Examples menu option is present in Files menu", "&Examples" in file_action_texts)
+
+ex_acts = w.examples_menu.actions()
+sec1_idx = next((i for i, a in enumerate(ex_acts) if "Board Examples" in a.text()), -1)
+sec2_idx = next((i for i, a in enumerate(ex_acts) if "Installed Libraries" in a.text()), -1)
+check("G34 Examples menu displays Board Examples first then Installed Libraries Examples",
+      sec1_idx != -1 and sec2_idx != -1 and sec1_idx < sec2_idx)
+
+pico_menu = next((a.menu() for a in ex_acts if a.text() == "PicoExamples"), None)
+sensor_menu = next((a.menu() for a in ex_acts if a.text() == "MockSensor"), None)
+check("G35 Board and installed library submenus contain example items",
+      pico_menu is not None and any(a.text() == "Blink" for a in pico_menu.actions())
+      and sensor_menu is not None and any(a.text() == "ReadSensor" for a in sensor_menu.actions()))
+
+read_sensor_act = next(a for a in sensor_menu.actions() if a.text() == "ReadSensor")
+read_sensor_act.trigger()
+check("G36 Triggering example opens sketch code into notebook cell with title",
+      w.notebook.cells[0].title_edit.text() == "ReadSensor"
+      and "Serial.begin" in w.notebook.cells[0].editor.toPlainText())
+
+blink_act = next(a for a in pico_menu.actions() if a.text() == "Blink")
+blink_act.trigger()
+check("G37 Opening multiple examples places each on different cells in single notebook",
+      len(w.notebook.cells) == 2
+      and w.notebook.cells[0].title_edit.text() == "ReadSensor"
+      and w.notebook.cells[1].title_edit.text() == "Blink"
+      and "pinMode" in w.notebook.cells[1].editor.toPlainText())
 
 boards_dialog.close(); library_dialog.close()
 if library_dialog.worker is not None: library_dialog.worker.wait(1000)

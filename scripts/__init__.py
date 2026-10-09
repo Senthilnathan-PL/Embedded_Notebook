@@ -30,6 +30,12 @@ from scripts.dialogs import (
     FindBar, SourceDialog, ToolchainManagerDialog, LibraryManagerDialog,
     BoardsManagerDialog, InstallWorker, LibraryWorker, PackageTaskPanel,
 )
+from scripts.media import (
+    GifPlayer, MarkdownDocument, VideoPlayerWidget, VideoPopoutDialog,
+    extract_gif_sources, extract_video_sources, encode_file_to_attachment,
+    get_attachment_bytes, cache_attachment_video, is_image_file, is_video_file,
+    detect_mime,
+)
 from scripts.main_window import (
     MainWindow, REGISTRY, BOARDS,
 )
@@ -45,5 +51,9 @@ __all__ = [
     "new_notebook_metadata", "NotebookFormatError", "REGISTRY", "BOARDS",
     "apply_theme", "resolve_theme", "make_icon", "CURRENT_THEME", "THEMES",
     "THEME_MODES", "STYLESHEET", "matching_bracket", "qt_pos_fn",
+    "GifPlayer", "MarkdownDocument", "VideoPlayerWidget", "VideoPopoutDialog",
+    "extract_gif_sources", "extract_video_sources", "encode_file_to_attachment",
+    "get_attachment_bytes", "cache_attachment_video", "is_image_file", "is_video_file",
+    "detect_mime",
 ]
 

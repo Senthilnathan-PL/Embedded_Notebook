@@ -2,9 +2,9 @@
 CodeEditor, LineNumberArea, CppHighlighter, and AutoEditor widgets.
 """
 import re
-from PySide6.QtCore import QEvent, QRect, QSize, Qt
+from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import (
-    QColor, QFont, QKeyEvent, QPainter, QPen, QSyntaxHighlighter,
+    QColor, QFont, QPainter, QPen, QSyntaxHighlighter,
     QTextCharFormat, QTextCursor,
 )
 from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget

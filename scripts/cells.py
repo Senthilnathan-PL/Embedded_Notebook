@@ -1,16 +1,26 @@
 """
 Notebook cell widgets: CodeCell, MarkdownCell, CellBase, and Notebook container.
 """
-import copy
-from PySide6.QtCore import QEvent, QSize, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QTextCursor
+import base64
+from pathlib import Path
+import re
+import uuid
+
+from PySide6.QtCore import QBuffer, QEvent, QIODevice, QSize, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QImage, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPushButton, QScrollArea, QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
 from scripts.common import qt_pos_fn
 from scripts.editor import AutoEditor, CppHighlighter
+from scripts.media import (
+    MarkdownDocument, VideoPlayerWidget, GifPlayer,
+    cache_attachment_video, encode_file_to_attachment,
+    extract_video_sources, extract_gif_sources, get_attachment_bytes,
+    is_image_file, is_video_file,
+)
 from scripts.theme import (
     ACCENT_TEXT, BG, BORDER, FIND_ALL, FIND_CUR, FIND_FG,
     MUTED, RUN_ACCENT, RUN_GREEN, TEAL, TEAL_HOVER, make_icon,
@@ -213,32 +223,57 @@ class CodeCell(CellBase):
 
 
 class MarkdownCell(CellBase):
-    """Markdown cell. kind="raw" is an nbformat raw cell: kept, shown as plain text, never rendered."""
+    """Markdown cell with support for attaching and rendering images and videos."""
 
-    def __init__(self, mono, text="", kind="markdown"):
+    def __init__(self, mono, text="", kind="markdown", extra=None, notebook_dir=None):
         super().__init__()
+        self.extra = extra or {}
+        self.notebook_dir = notebook_dir
         self.kind = kind
         self.text = text
         self.preview = kind == "markdown" and bool(text.strip())
         self._rendering = False
+        self.video_players = []
+        self.gif_players = []
+
         self.view = QTextEdit()
+        self.doc = MarkdownDocument(lambda: self, parent=self.view)
+        self.view.setDocument(self.doc)
         self.view.setFont(mono)
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.view.setPlaceholderText("Write Markdown here..." if kind == "markdown"
                                      else "Raw cell")
+        self.view.installEventFilter(self)
+
         self.toggle_btn = QPushButton("Edit")
         self.toggle_btn.clicked.connect(self.toggle)
         self.md_label = QLabel("MARKDOWN" if kind == "markdown" else "RAW")
+
         head = QHBoxLayout()
         head.addWidget(self.md_label)
         head.addStretch()
         if kind == "markdown":
+            self.attach_btn = QPushButton("Attach Media")
+            self.attach_btn.setToolTip("Attach an image or video to this markdown cell")
+            self.attach_btn.clicked.connect(self.prompt_attach_media)
+            head.addWidget(self.attach_btn)
             head.addWidget(self.toggle_btn)
         for b in self._move_buttons():
             head.addWidget(b)
+
         lay = QVBoxLayout(self)
         lay.addLayout(head)
         lay.addWidget(self.view)
+
+        # Embedded media players for videos
+        self.media_container = QWidget()
+        self.media_layout = QVBoxLayout(self.media_container)
+        self.media_layout.setContentsMargins(0, 4, 0, 0)
+        self.media_layout.setSpacing(8)
+        lay.addWidget(self.media_container)
+
+        self.setAcceptDrops(True)
+
         self._render()
         self.view.textChanged.connect(self._on_edit)
         self._style()
@@ -249,6 +284,8 @@ class MarkdownCell(CellBase):
     def retheme(self):
         self._style()
         self._apply_style()
+        for p in self.video_players:
+            p.retheme()
         if self.preview:
             self._render()
 
@@ -266,14 +303,221 @@ class MarkdownCell(CellBase):
         self.preview = not self.preview
         self._render()
 
+    def prompt_attach_media(self):
+        """Open file dialog to attach images or videos."""
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Attach Image or Video",
+            str(self.notebook_dir) if self.notebook_dir else "",
+            "Supported Media (*.png *.jpg *.jpeg *.gif *.bmp *.webp *.svg *.ico *.mp4 *.webm *.mkv *.avi *.mov);;"
+            "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp *.svg *.ico);;"
+            "Videos (*.mp4 *.webm *.mkv *.avi *.mov);;"
+            "All Files (*)",
+        )
+        if not paths:
+            return
+        for p in paths:
+            self.attach_file(p)
+
+    def attach_file(self, filepath: str | Path):
+        """Encode file into cell's attachments dictionary and insert markdown tag."""
+        try:
+            filename, mime, b64_str = encode_file_to_attachment(filepath)
+        except Exception as e:
+            QMessageBox.warning(self, "Attachment Error", f"Could not read {filepath}:\n{e}")
+            return
+
+        atts = self.extra.setdefault("attachments", {})
+        base_name = filename
+        idx = 1
+        stem = Path(filename).stem
+        ext = Path(filename).suffix
+        while filename in atts and atts[filename] != {mime: b64_str}:
+            filename = f"{stem}_{idx}{ext}"
+            idx += 1
+
+        atts[filename] = {mime: b64_str}
+
+        if is_video_file(filename):
+            tag = f'\n\n<video src="attachment:{filename}" controls></video>\n'
+        else:
+            tag = f"\n\n![{filename}](attachment:{filename})\n"
+
+        if self.preview:
+            self.text = self.text.rstrip() + tag
+            self._render()
+        else:
+            cur = self.view.textCursor()
+            if cur.position() == 0 and not self.view.toPlainText().strip():
+                self.view.setPlainText(tag.strip() + "\n")
+            else:
+                cur.insertText(tag)
+            self.text = self.view.toPlainText()
+            self._fit()
+
+        self.changed.emit()
+        return filename
+
+    def attach_image_object(self, qimg: QImage, name_hint="pasted_image"):
+        """Encode QImage from clipboard or screenshot into cell attachments."""
+        buf = QBuffer()
+        buf.open(QIODevice.WriteOnly)
+        qimg.save(buf, "PNG")
+        raw = bytes(buf.data())
+        b64_str = base64.b64encode(raw).decode("ascii")
+        filename = f"{name_hint}_{uuid.uuid4().hex[:6]}.png"
+        atts = self.extra.setdefault("attachments", {})
+        atts[filename] = {"image/png": b64_str}
+        tag = f"\n\n![{filename}](attachment:{filename})\n"
+
+        if self.preview:
+            self.text = self.text.rstrip() + tag
+            self._render()
+        else:
+            cur = self.view.textCursor()
+            cur.insertText(tag)
+            self.text = self.view.toPlainText()
+            self._fit()
+
+        self.changed.emit()
+
+    def dragEnterEvent(self, ev):
+        if ev.mimeData().hasUrls():
+            for u in ev.mimeData().urls():
+                if u.isLocalFile():
+                    p = u.toLocalFile()
+                    if is_image_file(p) or is_video_file(p):
+                        ev.acceptProposedAction()
+                        return
+        super().dragEnterEvent(ev)
+
+    def dropEvent(self, ev):
+        if ev.mimeData().hasUrls():
+            added = False
+            for u in ev.mimeData().urls():
+                if u.isLocalFile():
+                    p = u.toLocalFile()
+                    if is_image_file(p) or is_video_file(p):
+                        self.attach_file(p)
+                        added = True
+            if added:
+                ev.acceptProposedAction()
+                return
+        super().dropEvent(ev)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.view and ev.type() == QEvent.KeyPress:
+            if ev.key() == Qt.Key_V and (ev.modifiers() & Qt.ControlModifier):
+                cb = QApplication.clipboard()
+                md = cb.mimeData()
+                if md and md.hasImage():
+                    qimg = cb.image()
+                    if not qimg.isNull():
+                        self.attach_image_object(qimg)
+                        return True
+        return super().eventFilter(obj, ev)
+
+    def _on_delete_video(self, player_widget):
+        if QMessageBox.question(
+            self, "Remove Video",
+            f"Remove '{player_widget.name}' from this cell?",
+            QMessageBox.Yes | QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+
+        name = player_widget.name
+        atts = self.extra.get("attachments", {})
+        if name in atts:
+            del atts[name]
+
+        # Clean markdown tags referencing this attachment
+        text = self.get_text()
+        text = re.sub(rf'<video[^>]*src=["\']attachment:{re.escape(name)}["\'][^>]*>.*?</video>', '', text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(rf'<video[^>]*src=["\']attachment:{re.escape(name)}["\'][^>]*>', '', text, flags=re.IGNORECASE)
+        text = re.sub(rf'\[.*?\]\(attachment:{re.escape(name)}\)', '', text)
+        text = re.sub(rf'!\[.*?\]\(attachment:{re.escape(name)}\)', '', text)
+        self.text = text.strip()
+        if not self.preview:
+            self.view.setPlainText(self.text)
+        self._render()
+        self.changed.emit()
+
     def _render(self):
         self._rendering = True
         try:
+            for player in self.video_players:
+                player.release()
+                self.media_layout.removeWidget(player)
+                player.deleteLater()
+            self.video_players = []
+            for gp in self.gif_players:
+                gp.release()
+            self.gif_players = []
+
             if self.preview:
                 self.view.setReadOnly(True)
+                doc = self.view.document()
+                if hasattr(doc, "clear_cache"):
+                    doc.clear_cache()
                 self.view.setMarkdown(self.text)
+
+                # Explicitly register attachment image resources
+                atts = self.extra.get("attachments", {})
+                if isinstance(atts, dict):
+                    for fname in atts:
+                        if is_image_file(fname):
+                            _, raw = get_attachment_bytes(atts, fname)
+                            if raw:
+                                qimg = QImage()
+                                if qimg.loadFromData(raw):
+                                    doc.addResource(QTextDocument.ImageResource, QUrl(f"attachment:{fname}"), qimg)
+                                    doc.addResource(QTextDocument.ImageResource, QUrl(fname), qimg)
+
+                # Scan and build animated GIF players
+                gif_sources = extract_gif_sources(self.text, atts, base_dir=self.notebook_dir)
+                for gs in gif_sources:
+                    gp = GifPlayer(
+                        doc=doc,
+                        view=self.view,
+                        src=gs["src"],
+                        file_path=gs["file_path"],
+                        raw_bytes=gs["raw_bytes"],
+                        on_first_frame=self._fit,
+                        parent=self,
+                    )
+                    gp.start()
+                    self.gif_players.append(gp)
+
+                # Scan and build video player widgets
+                video_sources = extract_video_sources(self.text, atts)
+                for vs in video_sources:
+                    cached_file = None
+                    if vs["is_attachment"]:
+                        _, raw = get_attachment_bytes(atts, vs["name"])
+                        if raw:
+                            cached_file = cache_attachment_video(vs["name"], raw)
+                    else:
+                        cand = Path(vs["src"])
+                        if not cand.is_file() and self.notebook_dir:
+                            cand = Path(self.notebook_dir) / vs["src"]
+                        if cand.is_file():
+                            cached_file = cand
+
+                    player_w = VideoPlayerWidget(
+                        src=vs["src"],
+                        name=vs["name"],
+                        is_attachment=vs["is_attachment"],
+                        local_file=cached_file,
+                        parent=self.media_container,
+                    )
+                    player_w.delete_req.connect(self._on_delete_video)
+                    self.media_layout.addWidget(player_w)
+                    self.video_players.append(player_w)
+
+                self.media_container.setVisible(bool(self.video_players))
                 self.toggle_btn.setText("Edit")
             else:
+                self.media_container.setVisible(False)
                 self.view.setReadOnly(False)
                 self.view.setPlainText(self.text)
                 self.toggle_btn.setText("Preview")
@@ -320,6 +564,14 @@ class MarkdownCell(CellBase):
         self._render()
         self.changed.emit()
 
+    def release(self):
+        """Release media players and resources cleanly."""
+        for gp in self.gif_players:
+            gp.release()
+        self.gif_players.clear()
+        for player in self.video_players:
+            player.release()
+
 
 class Notebook(QScrollArea):
     compile_req = Signal(object)
@@ -333,6 +585,7 @@ class Notebook(QScrollArea):
         self.mono = mono
         self.cells = []
         self.current = None
+        self.notebook_dir = None
         self._loading = False
         self.setWidgetResizable(True)
         inner = QWidget()
@@ -342,6 +595,13 @@ class Notebook(QScrollArea):
         self.vbox.setSpacing(12)
         self.vbox.addStretch()
         self.setWidget(inner)
+
+    def set_notebook_path(self, path):
+        """Set the notebook directory for resolving relative media paths."""
+        self.notebook_dir = Path(path).parent if path else None
+        for c in self.cells:
+            if isinstance(c, MarkdownCell):
+                c.notebook_dir = self.notebook_dir
 
     def code_cells(self):
         return [c for c in self.cells if isinstance(c, CodeCell)]
@@ -377,8 +637,7 @@ class Notebook(QScrollArea):
         return self._add(w, scroll)
 
     def add_markdown(self, text="", kind="markdown", extra=None, scroll=True):
-        w = MarkdownCell(self.mono, text, kind)
-        w.extra = extra or {}
+        w = MarkdownCell(self.mono, text, kind, extra=extra, notebook_dir=self.notebook_dir)
         return self._add(w, scroll)
 
     def load_cells(self, items):
@@ -387,6 +646,8 @@ class Notebook(QScrollArea):
         self._loading = True
         try:
             for w in self.cells:
+                if hasattr(w, "release"):
+                    w.release()
                 self.vbox.removeWidget(w)
                 w.hide()
                 w.deleteLater()
@@ -446,6 +707,8 @@ class Notebook(QScrollArea):
     def remove(self, w):
         if QMessageBox.question(self, "Delete cell", "Delete this cell?") != QMessageBox.Yes:
             return
+        if hasattr(w, "release"):
+            w.release()
         was_current = w is self.current
         self.cells.remove(w)
         self.vbox.removeWidget(w)

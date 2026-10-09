@@ -1,6 +1,7 @@
 """
 MainWindow: primary window, menu, toolbar, compilers, uploaders, and serial monitor.
 """
+import copy
 import os
 import shutil
 import sys
@@ -11,40 +12,33 @@ import serial
 from serial.tools import list_ports
 
 from PySide6.QtCore import (
-    QEvent, QProcessEnvironment, QPointF, QProcess, QRect, QSettings, QSize, QThread, QTimer,
-    Qt, Signal,
+    QProcessEnvironment, QProcess, QSettings, QSize, QTimer, Qt,
 )
 from PySide6.QtGui import (
-    QAction, QColor, QFont, QIcon, QKeySequence, QPainter, QPalette, QPen, QPixmap,
-    QActionGroup, QShortcut, QSyntaxHighlighter, QTextCharFormat, QTextCursor,
+    QAction, QFont, QKeySequence, QActionGroup, QTextCursor,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
-    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
-    QPlainTextEdit, QPushButton, QProgressBar, QScrollArea, QSplitter, QTabWidget, QTextEdit,
+    QApplication, QComboBox, QDialog, QFileDialog,
+    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPlainTextEdit, QPushButton, QProgressBar, QSplitter, QTabWidget, QTextEdit,
     QToolButton, QVBoxLayout, QWidget,
 )
 
 import scripts.toolchain as tc
-from scripts.common import _mask, matching_bracket, qt_pos_fn
-from scripts.editor import CodeEditor, CppHighlighter, LineNumberArea, AutoEditor
-from scripts.cells import Notebook, CodeCell, MarkdownCell, CellBase
-from scripts.sketch_builder import build_sketch, split_cell, resolve_order
+from scripts.cells import Notebook, CodeCell, MarkdownCell
+from scripts.sketch_builder import build_sketch
 from scripts.notebook_format import (
     parse_notebook, serialize_notebook, ensure_notebook_suffix,
-    new_notebook_metadata, NotebookFormatError, NB_EXT, NB_EXTS, NB_KEY, NB_MINOR,
+    new_notebook_metadata, NotebookFormatError, NB_EXT, NB_KEY, NB_MINOR,
 )
 from scripts.serial_worker import SerialWorker
 from scripts.dialogs import (
     FindBar, SourceDialog, ToolchainManagerDialog, LibraryManagerDialog,
-    BoardsManagerDialog, InstallWorker, PackageTaskPanel,
+    BoardsManagerDialog,
 )
 from scripts.theme import (
-    apply_theme, resolve_theme, make_icon, CURRENT_THEME, THEMES, THEME_MODES,
-    ACCENT_TEXT, BAR, BG, BORDER, CODE_BG, CODE_FG, CODE_GUIDE, CODE_GUTTER,
-    CODE_SEL, DIS_BORDER, DIS_FG, DIS_ROUND, FAINT, FIND_ALL, FIND_CUR, FIND_FG,
-    HOVER1, HOVER2, LOG_BG, LOG_FG, MUTED, ORANGE, RUN_ACCENT, RUN_GREEN, SCROLL,
-    SEL, SURFACE, TEAL, TEAL_DARK, TEAL_HOVER, TEXT, WARN,
+    apply_theme, resolve_theme, make_icon, THEME_MODES,
+    BORDER, MUTED,
 )
 
 REGISTRY = tc.BoardRegistry()
@@ -132,6 +126,8 @@ class MainWindow(QMainWindow):
         m_file = self.menuBar().addMenu("&File")
         self.add_action(m_file, "&New", self.new_file, "Ctrl+N")
         self.add_action(m_file, "&Open...", self.open_file, "Ctrl+O")
+        self.examples_menu = m_file.addMenu("&Examples")
+        self.examples_menu.aboutToShow.connect(self.populate_examples_menu)
         m_file.addSeparator()
         self.add_action(m_file, "&Save", self.save_file, "Ctrl+S")
         self.add_action(m_file, "Save &As...", self.save_file_as, "Ctrl+Shift+S")
@@ -285,7 +281,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.target_status)
         self.busy_widgets = [self.verify_btn, self.upload_btn, self.verify_act,
                      self.upload_act]
-        self.board_combo.currentTextChanged.connect(self.update_target_status)
+        self.board_combo.currentTextChanged.connect(self._on_board_changed)
         self.port_combo.currentIndexChanged.connect(self.update_target_status)
         self.refresh_boards()
 
@@ -467,6 +463,7 @@ class MainWindow(QMainWindow):
             return False
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
+            self.notebook.notebook_dir = path.parent
             self.notebook.load_cells(cells)
         finally:
             QApplication.restoreOverrideCursor()
@@ -517,10 +514,255 @@ class MainWindow(QMainWindow):
         return self.write_path(self.path)
 
     def save_file_as(self):
+        default_name = getattr(self, "_suggested_name", "Untitled") or "Untitled"
         suggested = (self.path.with_suffix(NB_EXT) if self.path
-                     else Path.home() / ("Untitled" + NB_EXT))
+                     else Path.home() / (default_name + NB_EXT))
         path = self.pick_save_path(suggested)
         return path is not None and self.write_path(path)
+
+    def open_sketch_path(self, path):
+        path = Path(path)
+        if path.is_dir():
+            candidates = [
+                path / f"{path.name}.ino",
+                *sorted(path.glob("*.ino")),
+                *sorted(path.glob("*.pde")),
+                *sorted(path.glob("*.ipynb")),
+                *sorted(path.glob(f"*{NB_EXT}")),
+            ]
+            for c in candidates:
+                if c.is_file():
+                    path = c
+                    break
+        if not path.is_file():
+            QMessageBox.critical(self, "Cannot open example", f"Could not find example file in {path}")
+            return False
+
+        is_initial_empty = (
+            len(self.notebook.cells) == 1
+            and isinstance(self.notebook.cells[0], CodeCell)
+            and not self.notebook.cells[0].editor.toPlainText().strip()
+            and not self.notebook.cells[0].title_edit.text().strip()
+            and not self.dirty
+            and self.path is None
+        )
+
+        if path.suffix.lower() in (NB_EXT, ".ipynb"):
+            if is_initial_empty:
+                return self.load_path(path)
+            try:
+                text = path.read_bytes().decode("utf-8-sig")
+                cells, meta, minor = parse_notebook(text)
+            except Exception as e:
+                QMessageBox.critical(self, "Cannot open example", f"Could not read {path}:\n\n{e}")
+                return False
+            for c in cells:
+                ctype = c.get("type", "code")
+                if ctype == "code":
+                    self.notebook.add_code(
+                        title=c.get("title", ""),
+                        deps=c.get("deps", ""),
+                        code=c.get("source", ""),
+                        extra=c.get("extra"),
+                    )
+                else:
+                    self.notebook.add_markdown(
+                        text=c.get("source", ""),
+                        kind=c.get("kind", "markdown"),
+                        extra=c.get("extra"),
+                    )
+            self.set_dirty(True)
+            self.update_title()
+            if self.find_bar.isVisible():
+                self.find_bar.refresh()
+            self.log(f"Added notebook example '{path.name}' ({len(cells)} cells)")
+            return True
+
+        try:
+            code = path.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError as e:
+            QMessageBox.critical(self, "Cannot open example", f"Could not read {path}:\n\n{e}")
+            return False
+
+        if is_initial_empty:
+            cell = self.notebook.cells[0]
+            cell.title_edit.setText(path.stem)
+            cell.editor.setPlainText(code)
+            self.on_selection(cell)
+            self.set_dirty(False)
+            self._suggested_name = path.stem
+        else:
+            cell = self.notebook.add_code(title=path.stem, code=code)
+            self.on_selection(cell)
+            self.set_dirty(True)
+
+        ours = self.nb_meta.setdefault(NB_KEY, {})
+        current_board = self.board_combo.currentText()
+        if current_board and not ours.get("board"):
+            ours["board"] = current_board
+
+        self.update_title()
+        if self.find_bar.isVisible():
+            self.find_bar.refresh()
+        cell_num = self.notebook.cells.index(cell) + 1 if cell in self.notebook.cells else len(self.notebook.cells)
+        self.log(f"Opened example '{path.name}' in cell {cell_num}")
+        return True
+
+    @staticmethod
+    def _scan_examples_dir(examples_dir):
+        examples_dir = Path(examples_dir)
+        if not examples_dir.is_dir():
+            return []
+        items = []
+        try:
+            entries = sorted(examples_dir.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            return []
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                main_file = entry / f"{entry.name}.ino"
+                if main_file.is_file():
+                    items.append({"name": entry.name, "path": main_file, "type": "sketch"})
+                else:
+                    sketch_files = [p for p in entry.iterdir() if p.is_file() and p.suffix.lower() in (".ino", ".pde")]
+                    if sketch_files:
+                        items.append({"name": entry.name, "path": sorted(sketch_files)[0], "type": "sketch"})
+                    else:
+                        sub = MainWindow._scan_examples_dir(entry)
+                        if sub:
+                            items.append({"name": entry.name, "type": "category", "items": sub})
+            elif entry.suffix.lower() in (".ino", ".pde", ".ipynb", NB_EXT):
+                items.append({"name": entry.stem, "path": entry, "type": "sketch"})
+        return items
+
+    def get_board_examples(self):
+        board_name = self.board_combo.currentText()
+        if not board_name:
+            return []
+        try:
+            b = self.platforms.registry.board(board_name)
+            pid = b.platform_id
+        except KeyError:
+            pid = None
+        if not pid:
+            return []
+
+        packages_dir = self.env.ARDUINO_DATA / "packages"
+        packager, arch = pid.split(":", 1) if ":" in pid else (pid, pid)
+        hw_dir = packages_dir / packager / "hardware" / arch
+        if not hw_dir.is_dir():
+            return []
+
+        installed = self.platforms.installed_platforms()
+        ver = installed.get(pid)
+        plat_dir = None
+        if ver and (hw_dir / str(ver)).is_dir():
+            plat_dir = hw_dir / str(ver)
+        else:
+            dirs = [d for d in sorted(hw_dir.iterdir()) if d.is_dir()]
+            if dirs:
+                plat_dir = dirs[-1]
+        if not plat_dir:
+            return []
+
+        items = []
+        libs_dir = plat_dir / "libraries"
+        if libs_dir.is_dir():
+            try:
+                for lib in sorted(libs_dir.iterdir(), key=lambda p: p.name.lower()):
+                    if not lib.name.startswith(".") and (lib / "examples").is_dir():
+                        exs = self._scan_examples_dir(lib / "examples")
+                        if exs:
+                            items.append({"name": lib.name, "type": "category", "items": exs})
+            except OSError:
+                pass
+
+        if (plat_dir / "examples").is_dir():
+            top_exs = self._scan_examples_dir(plat_dir / "examples")
+            if top_exs:
+                items.extend(top_exs)
+
+        return items
+
+    def get_installed_library_examples(self):
+        lib_root = self.env.ARDUINO_LIBRARIES
+        if not lib_root.is_dir():
+            return []
+        items = []
+        try:
+            for lib in sorted(lib_root.iterdir(), key=lambda p: p.name.lower()):
+                if not lib.name.startswith(".") and (lib / "examples").is_dir():
+                    exs = self._scan_examples_dir(lib / "examples")
+                    if exs:
+                        items.append({"name": lib.name, "type": "category", "items": exs})
+        except OSError:
+            pass
+        return items
+
+    def get_notebook_examples(self):
+        nb_root = self.env.APP_ROOT / "Example Notebooks"
+        if not nb_root.is_dir():
+            return []
+        items = []
+        try:
+            candidates = sorted(nb_root.glob("*.ipynb")) + sorted(nb_root.glob(f"*{NB_EXT}"))
+            for p in candidates:
+                if not p.name.startswith("."):
+                    items.append({"name": p.stem, "path": p, "type": "sketch"})
+        except OSError:
+            pass
+        return items
+
+    def _add_example_menu_item(self, menu, item):
+        if item.get("type") == "category":
+            submenu = menu.addMenu(item["name"])
+            for sub_item in item.get("items", []):
+                self._add_example_menu_item(submenu, sub_item)
+        elif item.get("type") == "sketch":
+            action = menu.addAction(item["name"])
+            path = item.get("path")
+            action.triggered.connect(lambda _checked=False, p=path: self.open_sketch_path(p))
+
+    def populate_examples_menu(self):
+        if not hasattr(self, "examples_menu") or self.examples_menu is None:
+            return
+        self.examples_menu.clear()
+
+        # Section 1: Board Examples
+        board_name = self.board_combo.currentText()
+        board_title = f"Board Examples ({board_name})" if board_name else "Board Examples"
+        self.examples_menu.addSection(board_title)
+
+        board_exs = self.get_board_examples()
+        if board_exs:
+            for item in board_exs:
+                self._add_example_menu_item(self.examples_menu, item)
+        else:
+            action = self.examples_menu.addAction(
+                "No board examples available" if board_name else "No board selected")
+            action.setEnabled(False)
+
+        # Section 2: Installed Libraries Examples
+        self.examples_menu.addSeparator()
+        self.examples_menu.addSection("Installed Libraries Examples")
+
+        lib_exs = self.get_installed_library_examples()
+        if lib_exs:
+            for item in lib_exs:
+                self._add_example_menu_item(self.examples_menu, item)
+        else:
+            action = self.examples_menu.addAction("No installed library examples")
+            action.setEnabled(False)
+
+        # Section 3: Notebook Examples (if available)
+        nb_exs = self.get_notebook_examples()
+        if nb_exs:
+            self.examples_menu.addSeparator()
+            self.examples_menu.addSection("Notebook Examples")
+            for item in nb_exs:
+                self._add_example_menu_item(self.examples_menu, item)
 
     # ------------------------------------------------- toolbar / menu helpers
     def round_button(self, icon, tip, slot):
@@ -631,6 +873,14 @@ class MainWindow(QMainWindow):
         title = cell.title_edit.text().strip() or "Untitled"
         self.target_label.setText(f"Cell {n}  ·  {title}")
 
+    def _on_board_changed(self, text):
+        if text:
+            settings = QSettings("EmbeddedNotebook", "EmbeddedNotebook")
+            settings.setValue("selected_board", text)
+        self.update_target_status()
+        if hasattr(self, "populate_examples_menu"):
+            self.populate_examples_menu()
+
     def update_target_status(self, *_):
         board = self.board_combo.currentText()
         port = self.port_combo.currentData()
@@ -657,16 +907,47 @@ class MainWindow(QMainWindow):
     def refresh_boards(self):
         selected = self.board_combo.currentText()
         installed = self.platforms.installed_platforms()
-        names = [name for name, board in REGISTRY.boards.items()
-                 if board.platform_id in installed]
+        custom_boards = self.platforms.discover_installed_boards(installed)
+        for name, b in REGISTRY.boards.items():
+            plat = REGISTRY.platforms.get(b.platform_id)
+            url = plat.package_url if plat else None
+            BOARDS[name] = (b.fqbn, b.platform_id, url)
+
+        builtin_names = [name for name, board in REGISTRY.boards.items()
+                         if board.platform_id in installed and name not in custom_boards]
+        names = builtin_names + [b for b in custom_boards if b not in builtin_names]
+
+        settings = QSettings("EmbeddedNotebook", "EmbeddedNotebook")
+        saved = settings.value("selected_board", None)
+
+        target = None
+        if selected and selected in names:
+            target = selected
+        elif saved and saved in names:
+            target = saved
+        else:
+            for n in names:
+                if n == "NodeMCU 0.9" or n.lower().startswith("nodemcu 0.9"):
+                    target = n
+                    break
+            if not target and names:
+                target = names[0]
+
         self.board_combo.blockSignals(True)
         self.board_combo.clear()
         self.board_combo.addItems(names)
-        if selected in names:
-            self.board_combo.setCurrentText(selected)
+        if target and target in names:
+            self.board_combo.setCurrentText(target)
         self.board_combo.blockSignals(False)
+
+        current = self.board_combo.currentText()
+        if current:
+            settings.setValue("selected_board", current)
+
         if hasattr(self, "target_status"):
             self.update_target_status()
+        if hasattr(self, "populate_examples_menu"):
+            self.populate_examples_menu()
 
     def refresh_cli(self):
         self.cli = str(self.cli_mgr.path()) if self.cli_mgr.is_installed() else None

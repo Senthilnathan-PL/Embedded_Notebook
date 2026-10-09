@@ -21,7 +21,7 @@ import json
 import os
 import platform as _platform
 import queue
-import shutil
+import re
 import subprocess
 import sys
 import tarfile
@@ -157,6 +157,14 @@ class BoardRegistry:
         self.platforms[platform.id] = platform
         for b in platform.boards:
             self.boards[b.name] = b
+
+    def add_board(self, board):
+        self.boards[board.name] = board
+        if board.platform_id not in self.platforms:
+            arch = board.platform_id.split(":")[-1] if ":" in board.platform_id else ""
+            self.platforms[board.platform_id] = Platform(id=board.platform_id,
+                                                         name=board.platform_id,
+                                                         architecture=arch)
 
     def platform(self, pid):
         return self.platforms[pid]
@@ -416,6 +424,126 @@ class PlatformManager:
     def board_status(self, installed=None):
         installed = self.installed_platforms() if installed is None else installed
         return {n: b.platform_id in installed for n, b in self.registry.boards.items()}
+
+    @staticmethod
+    def parse_boards_txt(path, packager, arch):
+        boards = []
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    m = re.match(r"^([a-zA-Z0-9_-]+)\.name\s*=\s*(.+)$", line.strip())
+                    if m:
+                        bid, bname = m.group(1), m.group(2).strip()
+                        if bid.lower() != "menu":
+                            fqbn = f"{packager}:{arch}:{bid}"
+                            boards.append(Board(name=bname, fqbn=fqbn, platform_id=f"{packager}:{arch}"))
+        except OSError:
+            pass
+        return boards
+
+    def discover_installed_boards(self, installed=None):
+        """
+        Discovers boards from installed platforms that are not part of default_platforms(),
+        registers them in self.registry, and returns a sorted list of custom board names.
+        """
+        installed = self.installed_platforms() if installed is None else installed
+        builtin_pids = {p.id for p in default_platforms()}
+        custom_pids = [pid for pid in installed if pid not in builtin_pids]
+        if not custom_pids:
+            return []
+
+        discovered = []
+        found_for_pids = set()
+        packages_dir = self.env.ARDUINO_DATA / "packages"
+
+        # 1. Parse local boards.txt files
+        for pid in custom_pids:
+            if ":" in pid:
+                packager, arch = pid.split(":", 1)
+            else:
+                packager, arch = pid, pid
+            ver = installed.get(pid, "")
+            hw_dir = packages_dir / packager / "hardware" / arch
+            boards_txt_paths = []
+            if ver and (hw_dir / str(ver) / "boards.txt").is_file():
+                boards_txt_paths.append(hw_dir / str(ver) / "boards.txt")
+            elif hw_dir.is_dir():
+                boards_txt_paths.extend(sorted(hw_dir.glob("*/boards.txt")))
+
+            for bpath in boards_txt_paths:
+                boards = self.parse_boards_txt(bpath, packager, arch)
+                if boards:
+                    found_for_pids.add(pid)
+                    for b in boards:
+                        self.registry.add_board(b)
+                        discovered.append(b)
+
+        # 2. For any custom pid not found on disk, query core list via CLI
+        missing_pids = [pid for pid in custom_pids if pid not in found_for_pids]
+        if missing_pids and self.cli.is_installed():
+            try:
+                r = self.cli.run(["core", "list", "--format", "json"], timeout=30)
+                data = json.loads(r.stdout or "{}")
+                items = data.get("platforms", data) if isinstance(data, dict) else data
+                for p in items or []:
+                    pid = p.get("id")
+                    if pid in missing_pids:
+                        ver = p.get("installed_version") or p.get("installed") or p.get("version", "")
+                        rel = p.get("releases", {}).get(ver, {})
+                        for b in rel.get("boards", []):
+                            b_name = b.get("name")
+                            b_fqbn = b.get("fqbn")
+                            if b_name and b_fqbn:
+                                board = Board(name=b_name, fqbn=b_fqbn, platform_id=pid)
+                                self.registry.add_board(board)
+                                discovered.append(board)
+                                found_for_pids.add(pid)
+            except Exception:
+                pass
+
+        # 3. For any still missing, fallback to board listall via CLI
+        missing_pids = [pid for pid in custom_pids if pid not in found_for_pids]
+        if missing_pids and self.cli.is_installed():
+            for pid in missing_pids:
+                try:
+                    r = self.cli.run(["board", "listall", pid, "--format", "json"], timeout=30)
+                    data = json.loads(r.stdout or "{}")
+                    for b in data.get("boards", []):
+                        b_name = b.get("name")
+                        b_fqbn = b.get("fqbn")
+                        if b_name and b_fqbn:
+                            board = Board(name=b_name, fqbn=b_fqbn, platform_id=pid)
+                            self.registry.add_board(board)
+                            discovered.append(board)
+                except Exception:
+                    pass
+
+        # Sort discovered boards:
+        # Prioritize "Raspberry Pi Pico" official models first, then other pico models, then alphabetical
+        pico_prio = {
+            "Raspberry Pi Pico": 0,
+            "Raspberry Pi Pico W": 1,
+            "Raspberry Pi Pico 2": 2,
+            "Raspberry Pi Pico 2W": 3,
+        }
+        def sort_key(b):
+            name = b.name
+            if name in pico_prio:
+                return (0, pico_prio[name])
+            if name.startswith("Raspberry Pi Pico"):
+                return (1, name)
+            if "pico" in name.lower():
+                return (2, name)
+            return (3, name)
+
+        discovered_sorted = sorted(discovered, key=sort_key)
+        seen = set()
+        result = []
+        for b in discovered_sorted:
+            if b.name not in seen:
+                seen.add(b.name)
+                result.append(b.name)
+        return result
 
     def additional_package_urls(self):
         urls = self.env.load_state().get("additional_package_urls", [])

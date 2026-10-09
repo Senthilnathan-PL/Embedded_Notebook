@@ -185,4 +185,5 @@ try: cli3._extract(bad); check("corrupt archive rejected", False)
 except Exception as e: check("corrupt archive rejected", isinstance(e, (tarfile.TarError, OSError)))
 
 print(f"\n{sum(results)}/{len(results)} passed")
-sys.exit(0 if all(results) else 1)
+if __name__ == "__main__":
+    sys.exit(0 if all(results) else 1)

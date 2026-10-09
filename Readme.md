@@ -1,843 +1,128 @@
 # Embedded Notebook
 
-**Embedded Notebook** is a notebook-style environment for programming microcontrollers using Arduino-style C/C++ code.
-
-Instead of working with a single large `.ino` file, you can organize your embedded program into multiple notebook cells, build dependencies between cells, compile/upload individual cells, and interact with your board through the serial monitor.
+**Embedded Notebook** is a desktop notebook environment for programming microcontrollers using Arduino-style C/C++. Organize embedded code into modular cells, link cell dependencies, compile and upload directly to boards, and inspect outputs in the built-in serial monitor.
 
 ---
 
-## Features
+## Highlights
 
-* Notebook-based embedded programming
-* Arduino-style C/C++ code cells
-* Cell-to-cell dependencies
-* Compile and upload individual cells
-* Serial monitor
-* ESP32 support
-* NodeMCU / ESP8266 support
-* Arduino Uno and Nano support
-* Project-local Arduino CLI
-* Project-local MCU cores and libraries
-* `.icpnb` notebook format
-* `.ipynb` notebook compatibility
-* No global Arduino CLI installation required
+- **Cell-Based C/C++ Development**: Break firmware into setup, helper functions, and loop logic across cells.
+- **Cell Dependencies**: Declare dependencies (e.g. `1, 2` or `Blink, Sensors`) to merge and build target sketches incrementally.
+- **Self-Contained MCU Toolchain**: Bundles its own isolated `arduino-cli`, MCU cores, libraries, and build cache inside `.embedded/` — zero global toolchain clutter.
+- **Dual Notebook Format**: Full support for `.icpnb` and standard Jupyter `.ipynb` formats.
+- **Rich Media & Markdown**: Embedded Markdown cells support text notes, diagrams, videos, and animated GIFs.
+- **Integrated Board & Library Managers**: Install board platforms (NodeMCU/ESP8266, ESP32, AVR, RP2040) and Arduino libraries directly from the UI.
+- **Hardware Examples Menu**: Browse board core examples and installed library examples directly from `File → Examples`, opening sketches into notebook cells.
 
 ---
 
-# 1. Project Structure
-
-After extracting the project, you should have something similar to:
+## Project Structure
 
 ```text
 Embedded_Notebook/
-│
-├── Linux/
-│   ├── install.sh                # Linux launcher & desktop installer
-│   ├── uninstall.sh              # Linux uninstaller
-│   └── arduino.png               # Application icon
-│
-├── Windows/
-│   ├── install.bat               # Windows launcher & installer
-│   ├── uninstall.bat             # Windows uninstaller
-│   └── arduino.ico               # Application icon
-│
-├── Test_scripts/
-│   ├── test_toolchain.py         # Toolchain test suite
-│   └── test_toolchain_gui.py     # GUI and editor test suite
-│
-├── Example Notebooks/
-│   ├── lesson1_blink_to_button.ipynb
-│   └── dasai_mochi_animation_lab_nodemcu.ipynb
-│
-├── scripts/                      # Modular application package
-│   ├── main.py                   # Application entry point
-│   ├── main_window.py            # Main window and GUI
-│   ├── editor.py                 # Editor and syntax highlighter
-│   ├── cells.py                  # Notebook cells
-│   ├── dialogs.py                # Manager and tool dialogs
-│   ├── toolchain.py              # MCU toolchain backend
-│   └── ...
-│
-├── embedded_notebook2.py         # Application facade launcher
-├── embedded_toolchain.py         # Toolchain facade
-├── requirements.txt              # Python dependencies
-└── .venv/                        # Created automatically
+├── Linux/               # Linux desktop launcher (install.sh), uninstaller, and icon
+├── Windows/             # Windows launcher (install.bat), uninstaller, and icon
+├── scripts/             # Modular application package
+│   ├── main.py          # Entry point
+│   ├── main_window.py   # Main IDE window, menus, toolbar, compilation & serial runner
+│   ├── cells.py         # Code, markdown, and notebook widgets
+│   ├── editor.py        # C++ editor, syntax highlighter, auto-indent & auto-close
+│   ├── dialogs.py       # Boards Manager, Library Manager, Find/Replace, and Tools
+│   ├── media.py         # Video and animated GIF player engine
+│   ├── toolchain.py     # Local Arduino CLI, platform and package manager backend
+│   ├── sketch_builder.py# Dependency resolution and C++ sketch assembly
+│   ├── notebook_format.py# .icpnb and .ipynb serialization
+│   └── theme.py         # Auto/Light/Dark themes and vector icons
+├── Example Notebooks/   # Hands-on lessons and hardware demo notebooks
+├── Test_scripts/        # Automated test suites (CLI, GUI, Media)
+├── requirements.txt     # Python dependencies (PySide6, pyserial)
+└── .embedded/           # Auto-created local toolchain directory
 ```
 
-The `.embedded/` directory is also created by Embedded Notebook when the local MCU toolchain is installed.
+---
+
+## Quick Start
+
+### 1. Installation & Launch
+
+The launcher automatically sets up a local virtual environment (`.venv`) and installs all dependencies:
+
+- **Linux**:
+  ```bash
+  bash Linux/install.sh
+  ```
+  Adds **Embedded Notebook** to your application launcher. Open it from your applications menu or run `.venv/bin/python embedded_notebook2.py`.
+
+- **Windows**:
+  Double-click `Windows\install.bat` (or run it from CMD/PowerShell).
+
+### 2. First-Time Board Setup
+
+1. Open **Tools → Boards Manager**.
+2. Search for your board platform (e.g., `esp8266` for NodeMCU or `esp32` for ESP32) and click **Install**.
+   *(Need custom boards like Raspberry Pi Pico? Add the index URL under the **Package URLs** tab).*
+3. Connect your board via USB (ensure the cable supports data transfer).
+4. Select your board model and serial port from the top toolbar dropdowns.
+
+### 3. Open a Lesson or Example
+
+- Navigate to `File → Examples → Notebook Examples → lesson1_blink_to_button` to start learning.
+- Or explore core examples from `File → Examples → Board Examples` and `Installed Libraries Examples`. Clicking an example appends it cleanly as a cell in your active notebook.
 
 ---
 
-# 2. Requirements
-
-## Hardware
-
-You need a supported Arduino-compatible development board.
-
-Examples include:
-
-* NodeMCU 0.9
-* NodeMCU 1.0
-* ESP32 Dev Module
-* ESP32-C3 Dev Module
-* ESP32-S3 Dev Module
-* Arduino Uno
-* Arduino Nano
-
-You will also need a USB cable suitable for your development board.
-
-> Make sure the USB cable supports **data transfer**. Some USB cables are power-only.
-
----
-
-# 3. Python Requirements
-
-The application requires Python 3.
-
-The project includes a `requirements.txt` file containing:
+## Notebook Workflow
 
 ```text
-PySide6>=6.6,<7
-pyserial>=3.5
+Cell 1 (Pin definitions & setup)
+       ↓
+Cell 2 (Helper functions & debouncing)   [Depends on: 1]
+       ↓
+Cell 3 (Main execution loop)            [Depends on: 1, 2]
 ```
 
-The launcher automatically creates a local Python virtual environment and installs these dependencies.
-
-You normally **do not need to install these packages manually**.
-
----
-
-# 4. Running Embedded Notebook
-
-Choose the instructions for your operating system.
+- **Verify / Compile (`Ctrl+R`)**: Builds the selected cell together with all required upstream dependencies into a single sketch.
+- **Upload (`Ctrl+U`)**: Flashes the compiled binary to the connected board. Automatically disconnects the serial monitor during upload and reconnects once done.
+- **Show Generated Code (`Ctrl+Shift+G`)**: Inspects the final assembled `.ino` sketch before uploading.
+- **Serial Monitor (`Ctrl+Shift+M`)**: Opens the bottom monitor panel to send and view serial data at configurable baud rates.
 
 ---
 
-## Linux
+## Key Shortcuts
 
-### Step 1 — Open a terminal
+| Shortcut | Action |
+| :--- | :--- |
+| `Ctrl+R` | Verify / compile selected cell |
+| `Ctrl+U` | Upload sketch to board |
+| `Ctrl+Shift+G` | View combined generated sketch |
+| `Ctrl+Shift+M` | Toggle Serial Monitor |
+| `Ctrl+/` | Comment / uncomment lines from cursor or selection |
+| `Ctrl+F` / `Ctrl+H` | Find / Replace across notebook |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0`| Increase / Decrease / Reset editor font size |
+| `Ctrl+N` / `Ctrl+O` / `Ctrl+S`| New / Open / Save notebook |
 
-Navigate to the Embedded Notebook directory.
+---
 
-For example:
+## Uninstallation
+
+- **Linux**: `bash Linux/uninstall.sh`
+- **Windows**: Run `Windows\uninstall.bat`
+
+Removes the desktop shortcut, user configuration, `.venv`, and the local `.embedded` toolchain cache.
+
+---
+
+## Testing
+
+Run the automated test suites using the project virtual environment:
 
 ```bash
-cd ~/Embedded_Notebook
+# Toolchain & CLI backend (58 tests)
+.venv/bin/python Test_scripts/test_toolchain.py
+
+# Media & GIF cell rendering (9 tests)
+QT_QPA_PLATFORM=offscreen .venv/bin/python Test_scripts/test_media_cells.py
+
+# GUI, hotkeys, board manager & examples (81 tests)
+QT_QPA_PLATFORM=offscreen .venv/bin/python Test_scripts/test_toolchain_gui.py
 ```
-
-### Step 2 — Install the desktop app
-
-Run:
-
-```bash
-bash Linux/install.sh
-```
-
-The setup script will:
-
-1. Find the project directory.
-2. Create `.venv` if it doesn't exist.
-3. Install/update Python dependencies.
-4. Add **Embedded Notebook** to your application drawer.
-
-The setup script does not start the GUI. Open **Embedded Notebook** from your application
-drawer to run it with the project's virtual environment. You do **not** need to manually
-activate the environment or run Python yourself.
-
-### If the script has executable permission
-
-You can also run:
-
-```bash
-./Linux/install.sh
-```
-
-If Linux says:
-
-```text
-Permission denied
-```
-
-make it executable:
-
-```bash
-chmod +x Linux/install.sh
-```
-
-Then run the setup script once:
-
-```bash
-./Linux/install.sh
-```
-
-After setup, start Embedded Notebook from your application drawer.
-
-### Uninstalling the desktop app
-
-To completely remove everything installed by `Linux/install.sh` (desktop launcher, `.venv` virtual environment, `.embedded` toolchains, and settings):
-
-```bash
-bash Linux/uninstall.sh
-```
-
----
-
-# 5. Windows
-
-## Step 1 — Open the project folder
-
-Open the folder containing the project files, or navigate to `Windows\`:
-
-```text
-Windows\
-├── install.bat
-├── uninstall.bat
-└── arduino.ico
-```
-
-## Step 2 — Start Embedded Notebook
-
-Double-click:
-
-```text
-Windows\install.bat
-```
-
-Alternatively, open Command Prompt in the project directory and run:
-
-```bat
-Windows\install.bat
-```
-
-The launcher automatically:
-
-1. Finds the project directory.
-2. Creates `.venv` if required.
-3. Installs/updates the Python requirements.
-4. Starts Embedded Notebook using the local virtual environment.
-
-You do **not** need to activate `.venv` manually.
-
-### Uninstalling on Windows
-
-To completely remove everything (user settings, `.venv` virtual environment, `.embedded` toolchains, and all project files):
-
-Double-click `Windows\uninstall.bat` or run:
-
-```bat
-Windows\uninstall.bat
-```
-
----
-
-# 6. First Launch — Installing the MCU Toolchain
-
-Embedded Notebook uses its own **project-local Arduino CLI**.
-
-You do **not** need to install Arduino CLI globally.
-
-The application keeps its embedded toolchain inside:
-
-```text
-.embedded/
-```
-
-The directory contains the locally managed Arduino CLI, MCU cores, libraries, build files, downloads, cache, and configuration.
-
----
-
-## Installing the NodeMCU Core
-
-Start Embedded Notebook.
-
-Then open:
-
-```text
-Tools → Boards Manager
-```
-
-Use Search to find the required board platform, select its version, and install it. On
-first launch, Embedded Notebook may first open its setup dialog to install the local
-Arduino CLI.
-
-For a NodeMCU board, select the appropriate NodeMCU board:
-
-### NodeMCU 0.9
-
-```text
-NodeMCU 0.9
-```
-
-or:
-
-### NodeMCU 1.0
-
-```text
-NodeMCU 1.0
-```
-
-Both use the ESP8266 Arduino core.
-
-Select the ESP8266 platform package and install it. Add other package index URLs from the
-**Package URLs** tab; packages from those indexes become available in Search.
-
-The application will download and manage the required Arduino CLI/core inside the project.
-
-## Installing Arduino Libraries
-
-Open **Tools → Library Manager** to search the Arduino Library Registry, review library
-details, install a library, or view libraries already installed in this project. Library
-files are managed locally under `.embedded/` by the project's Arduino CLI.
-
-After installation, include the library in a code cell using its normal Arduino header,
-for example:
-
-```cpp
-#include <ArduinoJson.h>
-```
-
-The board selector only lists boards whose MCU cores are installed. Use Boards Manager to
-install another core before selecting that board.
-
----
-
-# 7. Which NodeMCU Should I Select?
-
-If you have a common ESP8266 NodeMCU development board, it is usually one of these:
-
-| Board              | Select        |
-| ------------------ | ------------- |
-| NodeMCU 0.9        | `NodeMCU 0.9` |
-| NodeMCU v1.0       | `NodeMCU 1.0` |
-| ESP8266 NodeMCU V2 | `NodeMCU 1.0` |
-
-If you are unsure which board you have, check the markings on the PCB or the board/module.
-
----
-
-# 8. Connecting the NodeMCU
-
-Connect your NodeMCU to the computer using USB.
-
-Then open Embedded Notebook.
-
-The serial port should appear in the application's board/port controls.
-
-On Linux, it may look similar to:
-
-```text
-/dev/ttyUSB0
-```
-
-or:
-
-```text
-/dev/ttyACM0
-```
-
-On Windows, it may look like:
-
-```text
-COM3
-```
-
-```text
-COM4
-```
-
-or another `COM` number.
-
----
-
-# 9. Your First Lesson
-
-The project includes an example notebook:
-
-```text
-lesson1_blink_to_button.ipynb
-```
-
-This lesson demonstrates moving from a simple LED blink program to a button-controlled LED.
-
-The lesson contains several code cells.
-
-The basic progression is:
-
-```text
-Cell 1
-   ↓
-LED blinking
-
-Cell 2
-   ↓
-Read button
-
-Cell 3
-   ↓
-Button debouncing
-
-Cell 4
-   ↓
-Button controls LED
-```
-
----
-
-# 10. Opening Lesson 1
-
-Start Embedded Notebook.
-
-Open:
-
-```text
-lesson1_blink_to_button.ipynb
-```
-
-You can open it using the application's notebook/file-open functionality.
-
-The notebook can also be supplied when launching the application:
-
-```bash
-python embedded_notebook2.py lesson1_blink_to_button.ipynb
-```
-
-On Windows:
-
-```bat
-.venv\Scripts\python.exe embedded_notebook2.py lesson1_blink_to_button.ipynb
-```
-
-The application supports `.ipynb` files as well as its `.icpnb` notebook format.
-
----
-
-# 11. Understanding Notebook Cells
-
-Each code cell contains normal Arduino-style C/C++ code.
-
-For example:
-
-```cpp
-const int LED_PIN = 2;
-
-void setup() {
-    pinMode(LED_PIN, OUTPUT);
-}
-
-void loop() {
-    digitalWrite(LED_PIN, HIGH);
-    delay(500);
-
-    digitalWrite(LED_PIN, LOW);
-    delay(500);
-}
-```
-
-A cell can contain:
-
-* Global variables
-* `#include` statements
-* Functions
-* `setup()`
-* `loop()`
-
-You can build larger programs by splitting them into multiple cells.
-
----
-
-# 12. Cell Dependencies
-
-A cell can depend on another cell.
-
-For example:
-
-```text
-Cell 1
-LED setup
-   ↓
-Cell 2
-Button setup
-   ↓
-Cell 3
-Button debounce function
-   ↓
-Cell 4
-Final button-controlled LED
-```
-
-When you upload a cell, Embedded Notebook combines the required cells into a single Arduino sketch.
-
-Conceptually:
-
-```text
-Dependencies
-     ↓
-globals + functions
-     ↓
-setup()
-     ↓
-uploaded cell's loop()
-     ↓
-Arduino sketch
-     ↓
-Compile
-     ↓
-Upload
-```
-
-This allows you to develop embedded programs incrementally.
-
----
-
-# 13. Show Code
-
-Use **Show Code** on a cell to see the combined Arduino sketch that Embedded Notebook will build from the selected cell and its dependencies.
-
-This is useful for understanding what is actually being compiled and uploaded to the microcontroller.
-
----
-
-# 14. Creating Your Own Notebook
-
-You do not have to use the supplied lesson.
-
-You can create your own notebook.
-
-Create a new notebook from Embedded Notebook and add code cells.
-
-For example:
-
-### Cell 1 — LED setup
-
-```cpp
-const int LED_PIN = 2;
-
-void setup() {
-    pinMode(LED_PIN, OUTPUT);
-}
-```
-
-### Cell 2 — Blink
-
-```cpp
-void loop() {
-    digitalWrite(LED_PIN, HIGH);
-    delay(500);
-
-    digitalWrite(LED_PIN, LOW);
-    delay(500);
-}
-```
-
-Then configure the dependency relationship if required.
-
-Your notebook can contain as many logical sections/cells as your project needs.
-
----
-
-# 15. `.ipynb` vs `.icpnb`
-
-Embedded Notebook supports both formats.
-
-## `.ipynb`
-
-This is the standard Jupyter Notebook format.
-
-Example:
-
-```text
-my_project.ipynb
-```
-
-Use this if you want to work with a conventional Jupyter-compatible notebook file.
-
----
-
-## `.icpnb`
-
-Embedded Notebook's native notebook extension is:
-
-```text
-.icpnb
-```
-
-For example:
-
-```text
-my_robot.icpnb
-```
-
-The notebook content uses the Jupyter Notebook JSON structure, but the `.icpnb` extension identifies it as an Embedded Notebook project.
-
----
-
-# 16. Recommended Learning Workflow
-
-If you are new to Embedded Notebook, follow this sequence:
-
-```text
-1. Start Embedded Notebook
-        ↓
-2. Open Boards Manager
-        ↓
-3. Install NodeMCU core
-        ↓
-4. Connect NodeMCU through USB
-        ↓
-5. Select the correct board
-        ↓
-6. Select the serial port
-        ↓
-7. Open lesson1_blink_to_button.ipynb
-        ↓
-8. Read the first cell
-        ↓
-9. Compile / Upload
-        ↓
-10. Observe the board
-        ↓
-11. Move through the dependent cells
-        ↓
-12. Create your own notebook
-```
-
----
-
-# 17. Creating Your Own Embedded Project
-
-Once you understand the first lesson, create a notebook for your own project.
-
-For example:
-
-```text
-my_nodemcu_project.icpnb
-```
-
-You could organize it like:
-
-```text
-Cell 1
-Constants and pin definitions
-
-Cell 2
-Sensor initialization
-
-Cell 3
-Sensor reading functions
-
-Cell 4
-Motor control
-
-Cell 5
-Communication
-
-Cell 6
-Main application
-```
-
-Then use cell dependencies to combine the required functionality.
-
-This keeps your embedded code organized without having to maintain one huge Arduino sketch.
-
----
-
-# 18. Troubleshooting
-
-## Python is not found
-
-If you see something similar to:
-
-```text
-python is not recognized
-```
-
-on Windows, or:
-
-```text
-python: command not found
-```
-
-on Linux, install Python 3 and make sure it is available from your terminal.
-
-Then run the launcher again.
-
----
-
-## `serial` module is missing
-
-If you see:
-
-```text
-ModuleNotFoundError: No module named 'serial'
-```
-
-make sure you start the application using the supplied launcher.
-
-The launcher installs:
-
-```text
-pyserial
-```
-
-into the project's virtual environment.
-
-If necessary, manually install it:
-
-### Linux
-
-```bash
-.venv/bin/python -m pip install -r requirements.txt
-```
-
-### Windows
-
-```bat
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
----
-
-## NodeMCU is not detected
-
-Check:
-
-1. The USB cable supports data.
-2. The NodeMCU is powered.
-3. The correct USB/serial driver is installed.
-4. The serial port appears in the operating system.
-5. The correct port is selected in Embedded Notebook.
-6. The correct NodeMCU board is selected.
-
----
-
-## Toolchain is not installed
-
-Open:
-
-```text
-Tools → Boards Manager
-```
-
-and install the required board platform.
-
-For NodeMCU, install the ESP8266 platform through Boards Manager.
-
----
-
-# 19. Important: Do Not Delete `.embedded` Unless You Intend To Reset the Toolchain
-
-Embedded Notebook stores its local MCU toolchain and related data inside:
-
-```text
-.embedded/
-```
-
-This can include:
-
-```text
-.embedded/
-├── arduino-cli/
-├── config/
-├── data/
-├── downloads/
-├── build/
-├── cache/
-└── logs/
-```
-
-Deleting this directory may require the MCU cores and other toolchain components to be downloaded again.
-
----
-
-# 20. Quick Start
-
-If everything is already installed:
-
-### Linux
-
-```bash
-bash Linux/install.sh
-```
-
-### Windows
-
-```text
-Double-click Windows\install.bat
-```
-
-Then:
-
-```text
-Tools
-  ↓
-Boards Manager
-  ↓
-Install NodeMCU core
-  ↓
-Connect NodeMCU
-  ↓
-Select board + serial port
-  ↓
-Open lesson1_blink_to_button.ipynb
-  ↓
-Compile / Upload
-```
-
-After completing the lesson, create your own:
-
-```text
-.icpnb
-```
-
-or:
-
-```text
-.ipynb
-```
-
-notebook and start building your own embedded project.
-
----
-
-# 21. Getting Started
-
-If this is your first time using Embedded Notebook, **start with:**
-
-```text
-lesson1_blink_to_button.ipynb
-```
-
-It introduces the basic idea of using multiple cells, dependencies, Arduino-style code, and uploading the resulting sketch to a microcontroller.
-
-Once you understand the lesson, create your own notebook and experiment with sensors, LEDs, buttons, motors, serial communication, and other embedded hardware.
-
----
-
-# 22. Running Tests
-
-The test suites are located in `Test_scripts/` and can be run from the repository root or from within the `Test_scripts/` folder using Python:
-
-### Toolchain Backend Tests (58 tests)
-
-```bash
-python -m unittest Test_scripts/test_toolchain.py
-```
-
-### GUI, Editor, and Hotkey Tests (72 tests)
-
-Run in headless / offscreen mode:
-
-```bash
-QT_QPA_PLATFORM=offscreen python -m unittest Test_scripts/test_toolchain_gui.py
-```
-
-### Running All Tests Together
-
-```bash
-QT_QPA_PLATFORM=offscreen python -m unittest discover -s Test_scripts -p "test_*.py"
-```
-
----
-
-**Happy making!**
-
