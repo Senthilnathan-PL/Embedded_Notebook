@@ -38,7 +38,14 @@ if "%FORCE%"=="0" (
 echo.
 echo Uninstalling Embedded Notebook...
 
-REM 1. Remove user settings
+REM 1. Remove desktop shortcut
+set "DESK_SHORTCUT=%USERPROFILE%\Desktop\Embedded Notebook.lnk"
+if exist "%DESK_SHORTCUT%" (
+    echo Removing desktop shortcut...
+    del /f /q "%DESK_SHORTCUT%" 2>nul
+)
+
+REM 2. Remove user settings
 if exist "%APPDATA%\EmbeddedNotebook" (
     echo Removing user settings...
     rd /s /q "%APPDATA%\EmbeddedNotebook" 2>nul
