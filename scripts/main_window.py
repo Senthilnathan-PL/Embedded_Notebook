@@ -34,7 +34,7 @@ from scripts.notebook_format import (
 from scripts.serial_worker import SerialWorker
 from scripts.dialogs import (
     FindBar, SourceDialog, ToolchainManagerDialog, LibraryManagerDialog,
-    BoardsManagerDialog,
+    BoardsManagerDialog, InstallWorker,
 )
 from scripts.theme import (
     apply_theme, resolve_theme, make_icon, THEME_MODES,
@@ -299,13 +299,7 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.refresh_ports)
         self.timer.start(3000)
 
-        if not self.cli:
-            self.log("Local Arduino CLI not found in "
-                     f"{self.env.relpath(self.env.CLI_DIR)}. Open Tools > Boards Manager to set it up.")
-            if prompt_setup:
-                QTimer.singleShot(0, self.first_run_setup)
-        else:
-            self.log(f"Using local {self.cli}")
+        self._check_default_platforms()
 
     # ------------------------------------------------------------- theme
     def apply_inline_styles(self):
@@ -889,6 +883,7 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------------- helpers
     def log(self, text, end="\n"):
+        print(text, end=end, flush=True)
         self.log_view.moveCursor(QTextCursor.End)
         self.log_view.insertPlainText(text + end)
         self.log_view.moveCursor(QTextCursor.End)
@@ -952,9 +947,35 @@ class MainWindow(QMainWindow):
     def refresh_cli(self):
         self.cli = str(self.cli_mgr.path()) if self.cli_mgr.is_installed() else None
 
+    def _check_default_platforms(self):
+        """Silently ensure default Arduino AVR and ESP8266 NodeMCU platforms in background without dialogue prompt."""
+        self.refresh_cli()
+        installed = self.platforms.installed_platforms()
+        missing = [pid for pid in ("arduino:avr", "esp8266:esp8266") if pid not in installed]
+        if not self.cli or missing:
+            self.log("Setting up default Arduino and NodeMCU board packages in background...")
+            def _task(say, cancelled):
+                return self.platforms.install(["arduino:avr", "esp8266:esp8266"], say, cancelled)
+
+            self.install_worker = InstallWorker(_task)
+            self._bg_install_worker = self.install_worker
+            self._bg_install_worker.progress.connect(self.log)
+            self._bg_install_worker.finished_ok.connect(self._on_default_platforms_installed)
+            self._bg_install_worker.start()
+        else:
+            self.log(f"Using local {self.cli}")
+
+    def _on_default_platforms_installed(self, ok, err):
+        self.refresh_cli()
+        self.refresh_boards()
+        self.update_target_status()
+        if ok:
+            self.log("Default Arduino and NodeMCU board packages are ready.")
+        else:
+            self.log(f"Background board setup note: {err}")
+
     def first_run_setup(self):
-        if not self.cli_mgr.is_installed() or not self.env.is_initialized():
-            self.open_toolchain_manager(first_run=True)
+        self._check_default_platforms()
 
     def open_toolchain_manager(self, first_run=False):
         if self.proc is not None:
@@ -989,10 +1010,13 @@ class MainWindow(QMainWindow):
             return
         self.refresh_cli()
         if not self.cli:
-            self.open_toolchain_manager(first_run=True)
-            self.refresh_cli()
-        if not self.cli:
-            return
+            self.log("Installing local Arduino CLI...")
+            try:
+                self.cli_mgr.install(progress=self.log)
+                self.refresh_cli()
+            except Exception as e:
+                self.log(f"Failed to install Arduino CLI: {e}")
+                return
         self.boards_manager_dialog = BoardsManagerDialog(self, self.platforms)
         self.boards_manager_dialog.finished.connect(
             lambda _result: (self.refresh_boards(), self.update_target_status()))
@@ -1188,9 +1212,12 @@ class MainWindow(QMainWindow):
         self.ser_btn.setText("Connect")
 
     def on_serial_line(self, text):
-        self.ser_view.appendPlainText(f"{time.strftime('%H:%M:%S')}  {text}")
+        line = f"{time.strftime('%H:%M:%S')}  {text}"
+        print(f"[SERIAL] {line}", flush=True)
+        self.ser_view.appendPlainText(line)
 
     def on_serial_error(self, msg):
+        print(f"[SERIAL ERROR] [{msg}]", flush=True)
         self.ser_view.appendPlainText(f"[{msg}]")
         self.disconnect_serial()
 

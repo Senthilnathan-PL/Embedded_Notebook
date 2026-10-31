@@ -54,8 +54,8 @@ Embedded Notebook automatically provisions an isolated virtual environment (`.ve
 ### Windows Setup
 1. Open the project folder in Windows File Explorer.
 2. Double-click `Windows\install.bat` (or run it via Command Prompt / PowerShell).
-3. The installer creates an **Embedded Notebook.bat** launcher on your Desktop styled with the `arduino.ico` icon, configured to run the application directly in `.venv`.
-4. Launch the application anytime by double-clicking the launcher on your Desktop.
+3. The installer creates an **Embedded Notebook** desktop shortcut styled with the `embeddednotebook.ico` icon, configured to run the application directly inside `.venv` via `Windows\run.bat`.
+4. Launch the application anytime by double-clicking the Desktop shortcut or `Windows\run.bat`.
 
 ---
 

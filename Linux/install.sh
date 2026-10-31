@@ -24,6 +24,7 @@ fi
 printf 'Installing/updating Python requirements...\n'
 "$VENV/bin/python" -m pip install -r "$PROJECT_ROOT/requirements.txt"
 
+
 APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP_FILE="$APPLICATIONS_DIR/embedded-notebook.desktop"
 mkdir -p "$APPLICATIONS_DIR"
@@ -43,9 +44,9 @@ else
     APP_EXEC="$(desktop_quote "$PROJECT_ROOT/scripts/main.py")"
 fi
 
-ICON_PATH="$PROJECT_ROOT/arduino.png"
-if [[ ! -f "$ICON_PATH" && -f "$SCRIPT_DIR/arduino.png" ]]; then
-    ICON_PATH="$SCRIPT_DIR/arduino.png"
+ICON_PATH="$PROJECT_ROOT/embeddednotebook.png"
+if [[ ! -f "$ICON_PATH" && -f "$SCRIPT_DIR/embeddednotebook.png" ]]; then
+    ICON_PATH="$SCRIPT_DIR/embeddednotebook.png"
 fi
 
 cat > "$DESKTOP_FILE" <<EOF
