@@ -35,27 +35,53 @@
 
 ## Installation & Setup
 
-Embedded Notebook automatically provisions an isolated virtual environment (`.venv`) and installs required packages (`PySide6`, `pyserial`).
+Embedded Notebook sets up an isolated virtual environment (`.venv`), installs all dependencies, and creates a ready-to-use application launcher for your OS.
+
+---
 
 ### Linux Setup
-1. Open a terminal and clone or extract the project:
-   ```bash
-   cd ~/Embedded_Notebook
-   ```
-2. Run the desktop installer:
-   ```bash
-   bash Linux/install.sh
-   ```
-3. Launch **Embedded Notebook** from your desktop application launcher or run:
-   ```bash
-   .venv/bin/python embedded_notebook2.py
-   ```
+
+The Linux installer creates the virtual environment, installs dependencies, and registers **Embedded Notebook** directly into your system's application drawer with its custom icon.
+
+#### 1. Prerequisites
+Ensure Python 3 and the venv module are installed:
+```bash
+sudo apt update && sudo apt install python3 python3-venv
+```
+
+#### 2. Run the Installer
+In the project directory, run:
+```bash
+bash Linux/install.sh
+```
+
+#### What It Does:
+- **`.venv/`**: Creates an isolated virtual environment and installs dependencies from `requirements.txt`.
+- **App Drawer Entry**: Generates `~/.local/share/applications/embedded-notebook.desktop` linked to the application icon.
+
+#### 3. How to Launch
+- **From Application Drawer**: Open your system app launcher (Super / Windows key), search for **Embedded Notebook**, and click to launch.
+- **From Terminal**:
+  ```bash
+  .venv/bin/python embedded_notebook2.py
+  ```
+
+---
 
 ### Windows Setup
-1. Open the project folder in Windows File Explorer.
-2. Double-click `Windows\install.bat` (or run it via Command Prompt / PowerShell).
-3. The installer creates an **Embedded Notebook** desktop shortcut styled with the `embeddednotebook.ico` icon, configured to run the application directly inside `.venv` via `Windows\run.bat`.
-4. Launch the application anytime by double-clicking the Desktop shortcut or `Windows\run.bat`.
+
+The Windows installer sets up the virtual environment, installs dependencies, and creates a desktop shortcut linked to the application icon.
+
+#### 1. Run the Installer
+In File Explorer, double-click **`Windows\install.bat`** (or execute it from Command Prompt / PowerShell).
+
+#### What It Does:
+- **`.venv\`**: Creates an isolated virtual environment and installs dependencies from `requirements.txt`.
+- **Desktop Shortcut**: Generates an **Embedded Notebook** shortcut on your Desktop (`Embedded Notebook.lnk`) styled with `embeddednotebook.ico`.
+
+#### 2. How to Launch
+- **From Desktop**: Double-click the **Embedded Notebook** desktop shortcut.
+- **From Batch Launcher**: Double-click `Windows\run.bat` in the project folder.
 
 ---
 
@@ -217,16 +243,50 @@ Embedded_Notebook/
 
 ## Uninstallation
 
-To completely remove Embedded Notebook and its local environment:
+If you ever wish to completely remove Embedded Notebook, automated uninstallation scripts are provided for both operating systems.
 
-- **Linux**:
-  ```bash
-  bash Linux/uninstall.sh
-  ```
-- **Windows**:
-  Run `Windows\uninstall.bat` from Command Prompt or File Explorer.
+> [!WARNING]
+> The uninstallation scripts are designed for a **full and clean removal**. They will prompt for confirmation before proceeding unless run with a force flag (`-y` or `--force`).
 
-Both uninstallation scripts safely remove desktop shortcuts, user configuration, `.venv`, and the `.embedded/` toolchain cache.
+### Linux Uninstallation
+
+Run the uninstaller script from your terminal:
+```bash
+bash Linux/uninstall.sh
+```
+*(To skip the interactive confirmation prompt, run: `bash Linux/uninstall.sh --yes`)*
+
+#### What `Linux/uninstall.sh` Removes:
+1. **Desktop Launcher Entry**:
+   - Removes `~/.local/share/applications/embedded-notebook.desktop` (and `$XDG_DATA_HOME` equivalents).
+   - Runs `update-desktop-database` to immediately unregister the app from your system application drawer / search menu.
+2. **User Preferences & State**:
+   - Removes `~/.config/EmbeddedNotebook/` (saved window sizes, themes, and manager caches).
+3. **Local Virtual Environment & Toolchains**:
+   - Completely removes the isolated `.venv/` virtual environment and `.embedded/` folder (including downloaded Arduino cores, toolchain binaries, and build artifacts).
+4. **Project Directory**:
+   - Safely removes the project directory, leaving your host system completely clean.
+
+---
+
+### Windows Uninstallation
+
+Run the uninstaller script by double-clicking **`Windows\uninstall.bat`** or executing it from Command Prompt / PowerShell:
+```cmd
+Windows\uninstall.bat
+```
+*(To skip the interactive confirmation prompt, pass: `Windows\uninstall.bat /y`)*
+
+#### What `Windows\uninstall.bat` Removes:
+1. **Desktop Shortcuts & Cleaners**:
+   - Removes `%USERPROFILE%\Desktop\Embedded Notebook.lnk`.
+   - Cleans any legacy desktop launcher files or folders (e.g. `Embedded Notebook.bat` or temporary Desktop folders).
+2. **User Preferences & Settings**:
+   - Removes `%APPDATA%\EmbeddedNotebook` (all user theme preferences, recent board selections, and manager caches).
+3. **Local Virtual Environment & Toolchains**:
+   - Deletes `.venv\` and the `.embedded\` local toolchain folder.
+4. **Project Files**:
+   - Safely switches out of the directory and removes all project files in the background.
 
 ---
 
