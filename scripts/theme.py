@@ -2,7 +2,7 @@
 Theme definitions, tokens, stylesheet generation, and icon painting.
 """
 import re
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QPixmap
 
 # --------------------------------------------------------------------------
@@ -236,6 +236,15 @@ def make_icon(kind, color="#ffffff"):
     elif kind == "monitor":
         p.drawEllipse(pt(.44, .44), .19 * S, .19 * S)
         p.drawLine(pt(.58, .58), pt(.77, .77))
+    elif kind in ("tv", "visualize"):
+        # TV icon: screen rectangle, stand, and rabbit-ear antennas
+        p.drawRoundedRect(QRectF(pt(.18, .28), pt(.82, .72)), 4, 4)
+        p.drawLine(pt(.40, .72), pt(.34, .82))
+        p.drawLine(pt(.60, .72), pt(.66, .82))
+        p.drawLine(pt(.30, .82), pt(.70, .82))
+        # Antennas
+        p.drawLine(pt(.50, .28), pt(.34, .14))
+        p.drawLine(pt(.50, .28), pt(.66, .14))
     p.end()
     icon = QIcon(pm)
     _ICON_CACHE[key] = icon

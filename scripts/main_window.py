@@ -38,7 +38,7 @@ from scripts.dialogs import (
 )
 from scripts.theme import (
     apply_theme, resolve_theme, make_icon, THEME_MODES,
-    BORDER, MUTED,
+    BORDER, MUTED, ACCENT_TEXT, LOG_BG, LOG_FG,
 )
 
 REGISTRY = tc.BoardRegistry()
@@ -94,6 +94,15 @@ class MainWindow(QMainWindow):
         refresh.setObjectName("quiet")
         refresh.setToolTip("Rescan serial ports")
         refresh.clicked.connect(self.refresh_ports)
+        self.visualize_btn = QToolButton()
+        self.visualize_btn.setObjectName("flat")
+        self.visualize_btn.setIcon(make_icon("tv", ACCENT_TEXT))
+        self.visualize_btn.setIconSize(QSize(30, 30))
+        self.visualize_btn.setFixedSize(34, 34)
+        self.visualize_btn.setToolTip("Visualize Concept (Ctrl+Shift+V)")
+        self.visualize_btn.clicked.connect(self.open_visualize_dialog)
+        self.visualize_process = None
+
         self.monitor_btn = QToolButton()
         self.monitor_btn.setObjectName("flat")
         self.monitor_btn.setIcon(make_icon("monitor", ACCENT_TEXT))
@@ -115,6 +124,7 @@ class MainWindow(QMainWindow):
         tl.addWidget(self.port_combo)
         tl.addWidget(refresh)
         tl.addStretch()
+        tl.addWidget(self.visualize_btn)
         tl.addWidget(self.monitor_btn)
 
         self.progress = QProgressBar()
@@ -170,6 +180,7 @@ class MainWindow(QMainWindow):
         self.add_action(m_tools, "&Library Manager...", self.open_library_manager)
         self.add_action(m_tools, "&Refresh Ports", self.refresh_ports)
         m_tools.addSeparator()
+        self.add_action(m_tools, "&Visualize Concept...", self.open_visualize_dialog, "Ctrl+Shift+V")
         self.add_action(m_tools, "&Serial Monitor", self.show_serial_tab, "Ctrl+Shift+M")
 
         # --- notebook, with a tab-strip showing which cell the toolbar targets --
@@ -309,6 +320,8 @@ class MainWindow(QMainWindow):
         self.log_view.setStyleSheet(
             f"QPlainTextEdit {{ background: {LOG_BG}; color: {LOG_FG}; padding: 4px; }}")
         self.ser_view.setStyleSheet(f"QPlainTextEdit {{ border: 1px solid {BORDER}; padding: 4px; }}")
+        if hasattr(self, "visualize_btn"):
+            self.visualize_btn.setIcon(make_icon("tv", ACCENT_TEXT))
         self.monitor_btn.setIcon(make_icon("monitor", ACCENT_TEXT))
 
     def _apply_theme_mode(self, color_scheme=None):
@@ -1227,10 +1240,50 @@ class MainWindow(QMainWindow):
             self.ser_view.appendPlainText(f"> {self.ser_input.text()}")
             self.ser_input.clear()
 
+    def open_visualize_dialog(self):
+        """Open a file dialog to pick a visualizer Python script, then run it."""
+        default_dir = self.env.APP_ROOT / "Visualize"
+        if not default_dir.is_dir():
+            default_dir = self.env.APP_ROOT
+
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Visualization Script",
+            str(default_dir),
+            "Python Scripts (*.py);;All Files (*)"
+        )
+        if not path_str:
+            return
+
+        script_path = Path(path_str)
+        if not script_path.is_file():
+            QMessageBox.warning(self, "Invalid File", f"Selected file does not exist:\n{script_path}")
+            return
+
+        # Stop any previously running visualization process
+        if getattr(self, "visualize_process", None) is not None:
+            if self.visualize_process.state() != QProcess.NotRunning:
+                self.visualize_process.kill()
+                self.visualize_process.waitForFinished(1000)
+
+        # Launch the visualization script
+        self.visualize_process = QProcess(self)
+        self.visualize_process.setWorkingDirectory(str(script_path.parent))
+
+        # Prefer current Python interpreter (.venv or sys.executable)
+        py_bin = sys.executable
+
+        self.visualize_process.start(py_bin, [str(script_path)])
+        self.log(f"Started visualization script: {script_path.name}")
+
     def closeEvent(self, event):
         if not self.maybe_save():
             event.ignore()
             return
+        if getattr(self, "visualize_process", None) is not None:
+            if self.visualize_process.state() != QProcess.NotRunning:
+                self.visualize_process.kill()
+                self.visualize_process.waitForFinished(1000)
         for dialog in (self.boards_manager_dialog, self.library_manager_dialog):
             worker = dialog.worker if dialog is not None else None
             if worker is not None and worker.isRunning():

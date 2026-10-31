@@ -1,5 +1,6 @@
 .venv/
 .embedded/
 __pycache__/
+Example Notebooks/
 *.mkv
 *.zip

@@ -1,0 +1,3112 @@
+#!/usr/bin/env python3
+"""
+Dasai Mochi - 5x OLED Concept, Algorithm & Mathematics Lab (Sidebar & C++ Code Edition)
+======================================================================================
+Features:
+- Left-Side Sidebar with Title, Dynamic Concept Timer & Control Dialog, and Scrollable Menu
+- 5x OLED Displays (640x320 px, strict 2:1 aspect ratio) across all concepts
+- Exact C++ Arduino code expressions on Line 1 with syntax highlighting
+- Real-time dynamic variable evaluation on Line 2 with large, prominent typography
+- Fixed LERP ping-pong simulation with gentle deceleration
+- Fixed Blinking with visual countdown progress bar, slow-motion controls & manual scrubber
+- Clean CSG Mask tab & dedicated Jitter/Vibration tab
+- Independent concept timers with isolated Start/Step/Reset controls
+
+Usage:
+    python3 mochi_interactive_explainer.py              # Starts local server & opens browser
+    python3 mochi_interactive_explainer.py --port 8080  # Custom port
+    python3 mochi_interactive_explainer.py --no-browser # Do not pop open browser
+    python3 mochi_interactive_explainer.py --html-only  # Just export the standalone HTML file
+"""
+
+import sys
+import os
+import argparse
+import webbrowser
+import socket
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
+
+HTML_CONTENT = r'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dasai Mochi — 5x OLED Concept & Algorithm Lab</title>
+<style>
+  :root {
+    --bg-dark: #05080d;
+    --bg-sidebar: #080c14;
+    --bg-card: #0d131f;
+    --bg-inner: #070b12;
+    --border: #1e2838;
+    --border-bright: #364761;
+    --text-main: #cdd9e5;
+    --text-bright: #f0f6fc;
+    --text-muted: #768390;
+    --accent-blue: #58a6ff;
+    --accent-cyan: #39c5cf;
+    --accent-green: #3fb950;
+    --accent-yellow: #d29922;
+    --accent-red: #f85149;
+    --accent-purple: #bc8cff;
+    --accent-orange: #f0883e;
+    --oled-blue: #00d4ff;
+    --oled-glow: rgba(0, 212, 255, 0.45);
+    --oled-bg: #010408;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg-dark);
+    color: var(--text-main);
+    line-height: 1.5;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Master App Layout: Left Sidebar + Right Main Content */
+  .app-layout {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ========================================================= */
+  /* LEFT SIDEBAR: Title, Timer Dialog Box & Scrollable Menu */
+  /* ========================================================= */
+  aside.sidebar {
+    width: 340px;
+    min-width: 320px;
+    max-width: 360px;
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    z-index: 200;
+  }
+
+  .sidebar-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--border);
+    background: #06090f;
+  }
+
+  .sidebar-header h1 {
+    font-size: 1.25rem;
+    color: var(--text-bright);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sidebar-header h1 span.badge {
+    font-size: 0.68rem;
+    background: #1f6feb;
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+  .sidebar-header p {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  /* Active Concept Timer & Control Dialog Box (in Sidebar) */
+  .sidebar-timer-box {
+    padding: 16px 20px;
+    background: #0a0f1a;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .st-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .st-title {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+  .st-concept-name {
+    font-size: 0.92rem;
+    color: var(--accent-cyan);
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .st-timer-badge {
+    background: #04070d;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 1.05rem;
+    color: var(--accent-yellow);
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .st-timer-badge .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--accent-green);
+    box-shadow: 0 0 8px var(--accent-green);
+  }
+  .st-timer-badge.paused .dot {
+    background: var(--accent-red);
+    box-shadow: none;
+  }
+
+  .st-controls-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .c-btn {
+    flex: 1;
+    background: #162030;
+    color: var(--text-bright);
+    border: 1px solid var(--border-bright);
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.15s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+  }
+  .c-btn:hover { background: #202d44; border-color: var(--accent-blue); }
+  .c-btn.btn-play { background: #238636; border-color: #2ea043; color: #fff; }
+  .c-btn.btn-play:hover { background: #2ea043; }
+  .c-btn.btn-pause { background: #9e6a03; border-color: #d29922; color: #fff; }
+  .c-btn.btn-step { background: #1f6feb; border-color: #388bfd; color: #fff; }
+  .c-btn.btn-reset { background: #252f3d; border-color: #3a4759; color: #c9d1d9; }
+  .c-btn.btn-reset:hover { background: #da3633; border-color: #f85149; color: #fff; }
+
+  /* Scrollable Concept Menu in Sidebar */
+  .sidebar-menu-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .sidebar-menu-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .sidebar-menu-scroll::-webkit-scrollbar-thumb {
+    background: #1e2838;
+    border-radius: 3px;
+  }
+
+  .nav-item-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-main);
+    padding: 10px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: left;
+    font-size: 0.86rem;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .nav-item-btn:hover {
+    background: #121a28;
+    color: var(--text-bright);
+    border-color: var(--border);
+  }
+  .nav-item-btn.active {
+    background: #1f6feb;
+    color: #fff;
+    border-color: #58a6ff;
+    font-weight: 600;
+    box-shadow: 0 0 14px rgba(31, 111, 235, 0.35);
+  }
+  .nav-item-btn span.num {
+    font-family: monospace;
+    font-size: 0.75rem;
+    opacity: 0.7;
+    width: 18px;
+  }
+
+  /* ========================================================= */
+  /* RIGHT MAIN CONTENT AREA */
+  /* ========================================================= */
+  main.main-content {
+    flex: 1;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 24px 30px 60px 30px;
+    background: var(--bg-dark);
+  }
+
+  main.main-content::-webkit-scrollbar {
+    width: 8px;
+  }
+  main.main-content::-webkit-scrollbar-thumb {
+    background: #1a2436;
+    border-radius: 4px;
+  }
+
+  .lab-card {
+    display: none;
+    animation: fadeIn 0.2s ease-in-out;
+  }
+  .lab-card.active { display: block; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .card-top {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px 12px 0 0;
+    padding: 18px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .card-title-group h2 {
+    font-size: 1.3rem;
+    color: var(--text-bright);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .card-title-group p {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  /* 5x OLED & Graph Display Split Panel */
+  .display-split-panel {
+    background: var(--bg-card);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    padding: 24px;
+    display: grid;
+    grid-template-columns: 660px 1fr;
+    gap: 24px;
+    align-items: start;
+  }
+
+  @media (max-width: 1440px) {
+    .display-split-panel { grid-template-columns: 1fr; }
+  }
+
+  /* STRICT 5x OLED (640x320 px, 2:1 ratio) */
+  .oled-bezel-5x {
+    width: 660px;
+    background: #010307;
+    border: 4px solid #243042;
+    border-radius: 12px;
+    padding: 10px;
+    box-shadow: 0 12px 36px rgba(0,0,0,0.85), inset 0 0 20px rgba(0,0,0,0.9);
+  }
+
+  .oled-header-5x {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: #637182;
+    margin-bottom: 6px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    padding: 0 4px;
+  }
+
+  canvas.oled-screen-5x {
+    width: 640px;
+    height: 320px;
+    aspect-ratio: 2 / 1;
+    image-rendering: pixelated;
+    background: var(--oled-bg);
+    border: 1px solid #142232;
+    border-radius: 4px;
+    display: block;
+    box-shadow: 0 0 25px var(--oled-glow);
+  }
+
+  /* Graph Box */
+  .graph-container {
+    background: var(--bg-inner);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    height: 350px;
+  }
+
+  .graph-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .graph-header h4 {
+    font-size: 0.95rem;
+    color: var(--text-bright);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .graph-legend {
+    font-size: 0.78rem;
+    font-family: monospace;
+    display: flex;
+    gap: 12px;
+  }
+
+  canvas.sync-graph-canvas {
+    width: 100%;
+    height: 280px;
+    background: #04070d;
+    border: 1px solid #141c2a;
+    border-radius: 6px;
+    display: block;
+  }
+
+  /* Bottom Controls & Iteration Data Panel */
+  .card-bottom {
+    background: #0a0f18;
+    border: 1px solid var(--border);
+    border-radius: 0 0 12px 12px;
+    padding: 22px 24px;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 24px;
+  }
+
+  @media (max-width: 1150px) {
+    .card-bottom { grid-template-columns: 1fr; }
+  }
+
+  .control-box {
+    background: #0d131f;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px;
+  }
+  .control-box h4 {
+    font-size: 0.95rem;
+    color: var(--text-bright);
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+
+  .c-slider-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .c-slider-row:last-child { margin-bottom: 0; }
+  .c-slider-label {
+    font-size: 0.85rem;
+    color: var(--text-main);
+  }
+  .c-slider-label small {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+  }
+  .c-slider-val {
+    font-family: monospace;
+    color: var(--accent-cyan);
+    font-size: 0.92rem;
+    font-weight: 600;
+    min-width: 55px;
+    text-align: right;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 150px;
+    height: 6px;
+    background: #1c2738;
+    border-radius: 3px;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: var(--accent-blue);
+    cursor: pointer;
+    box-shadow: 0 0 6px var(--accent-blue);
+  }
+
+  /* ========================================================= */
+  /* C++ ARDUINO CODE & DYNAMIC VALUE EVALUATION BOX */
+  /* ========================================================= */
+  .explainer-box {
+    background: #0d131f;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .explainer-box h4 {
+    font-size: 1.05rem;
+    color: var(--accent-yellow);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+
+  /* C++ Code Card */
+  .cpp-eval-card {
+    background: #05080f;
+    border-left: 4px solid var(--accent-blue);
+    border-top: 1px solid #182333;
+    border-right: 1px solid #182333;
+    border-bottom: 1px solid #182333;
+    padding: 16px 20px;
+    border-radius: 0 8px 8px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .cpp-tag {
+    font-size: 0.72rem;
+    color: var(--accent-blue);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Line 1: Exact C++ Code Expression with syntax highlighting */
+  .cpp-code-line {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 1.12rem;
+    color: #e6edf3;
+    background: #020409;
+    padding: 10px 14px;
+    border-radius: 6px;
+    border: 1px solid #1a2538;
+    line-height: 1.45;
+  }
+  .kw { color: #ff7b72; font-weight: bold; }
+  .type { color: #79c0ff; font-weight: bold; }
+  .fn { color: #d2a8ff; }
+  .var { color: #7ee787; }
+  .num { color: #a5d6ff; }
+  .cm { color: #8b949e; font-style: italic; }
+
+  /* Line 2: Real-time Dynamic Value Change */
+  .dynamic-eval-line {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 1.25rem; /* VERY LARGE FONT */
+    font-weight: 700;
+    color: var(--text-bright);
+    background: #091222;
+    padding: 12px 16px;
+    border-radius: 6px;
+    border: 1px solid #1f365c;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .dyn-cur { color: #58a6ff; }
+  .dyn-tgt { color: #d29922; }
+  .dyn-alpha { color: #f0883e; }
+  .dyn-res { color: #3fb950; text-decoration: underline; }
+
+  /* Iteration Table */
+  .iteration-table-wrap {
+    overflow-x: auto;
+  }
+  .iteration-audit-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem; /* LARGE READABLE FONT */
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .iteration-audit-table th, .iteration-audit-table td {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    text-align: left;
+  }
+  .iteration-audit-table th {
+    background: #131d2b;
+    color: var(--text-bright);
+    font-size: 0.85rem;
+  }
+  .iteration-audit-table tr.current-step {
+    background: rgba(88, 166, 255, 0.16);
+    color: #ffffff;
+    font-weight: 700;
+  }
+  .iteration-audit-table tr.prev-step {
+    background: #080c14;
+    color: var(--text-muted);
+  }
+
+  .iteration-narrative {
+    font-size: 0.95rem;
+    color: var(--text-main);
+    background: #060a12;
+    border: 1px solid var(--border);
+    padding: 12px 16px;
+    border-radius: 8px;
+    line-height: 1.5;
+  }
+
+  /* Countdown Progress Bar (Blink) */
+  .countdown-bar-container {
+    background: #141c28;
+    border-radius: 6px;
+    height: 10px;
+    overflow: hidden;
+    margin-top: 6px;
+    border: 1px solid var(--border);
+  }
+  .countdown-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #1f6feb, #39c5cf);
+    width: 100%;
+    transition: width 0.05s linear;
+  }
+</style>
+</head>
+<body>
+
+<div class="app-layout">
+
+  <!-- ============================================================== -->
+  <!-- LEFT SIDEBAR: TITLE, TIMER DIALOG BOX & SCROLLABLE TAB MENU -->
+  <!-- ============================================================== -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1>🐱 Dasai Mochi <span class="badge">5x OLED</span></h1>
+      <p>Interactive Arduino C++ Concept & Math Lab</p>
+    </div>
+
+    <!-- Active Concept Timer & Control Dialog Box -->
+    <div class="sidebar-timer-box">
+      <div class="st-header">
+        <span class="st-title">Active Concept Clock</span>
+        <span class="st-concept-name" id="sb_concept_name">1. Linear Move</span>
+      </div>
+      <div class="st-timer-badge" id="sb_timer_badge">
+        <span id="sb_timer_val">0 ms (Frame #0)</span>
+        <span class="dot"></span>
+      </div>
+      <div class="st-controls-row">
+        <button class="c-btn btn-play" id="sb_btn_play">▶ Start</button>
+        <button class="c-btn btn-step" id="sb_btn_step">⏭ Step</button>
+        <button class="c-btn btn-reset" id="sb_btn_reset">🔄 Reset</button>
+      </div>
+    </div>
+
+    <!-- Scrollable Concept Menu -->
+    <div class="sidebar-menu-scroll" id="sidebarMenu">
+      <button class="nav-item-btn active" data-tab="tab-linear"><span class="num">01</span> 🏃 Linear Moving Eye</button>
+      <button class="nav-item-btn" data-tab="tab-lerp"><span class="num">02</span> ⚡ Smooth LERP Eye</button>
+      <button class="nav-item-btn" data-tab="tab-blink"><span class="num">03</span> 👁️ Blinking Eye & Timers</button>
+      <button class="nav-item-btn" data-tab="tab-sine"><span class="num">04</span> 🌊 Bouncing Sine Wave</button>
+      <button class="nav-item-btn" data-tab="tab-saccade"><span class="num">05</span> 👀 Random Looking</button>
+      <button class="nav-item-btn" data-tab="tab-mask"><span class="num">06</span> ✂️ The Mask Trick (CSG)</button>
+      <button class="nav-item-btn" data-tab="tab-jitter"><span class="num">07</span> ⚡ Jitter & Vibration</button>
+      <button class="nav-item-btn" data-tab="tab-compound"><span class="num">08</span> ❤️ Compound Shapes</button>
+      <button class="nav-item-btn" data-tab="tab-phase"><span class="num">09</span> 💤 Phase & Modulo</button>
+      <button class="nav-item-btn" data-tab="tab-master"><span class="num">10</span> 🎮 Complete Mochi (FSM)</button>
+    </div>
+  </aside>
+
+  <!-- ============================================================== -->
+  <!-- RIGHT MAIN CONTENT AREA -->
+  <!-- ============================================================== -->
+  <main class="main-content">
+
+    <!-- CONCEPT 1: LINEAR MOVING EYE (Lesson 5) -->
+    <div id="tab-linear" class="lab-card active">
+      <div class="card-top">
+        <div class="card-title-group">
+          <h2><span>🏃</span> Lesson 5 — Linear Moving Eye (Constant Speed Flip-Book)</h2>
+          <p>Animation is a flip-book: clear screen → update position variable by constant step $v$ → redraw → repeat.</p>
+        </div>
+      </div>
+
+      <div class="display-split-panel">
+        <div class="oled-bezel-5x">
+          <div class="oled-header-5x">
+            <span>SSD1306 OLED (5x Scale: 640×320 px)</span>
+            <span>Constant Velocity Kinematics</span>
+          </div>
+          <canvas id="c1_oled" class="oled-screen-5x" width="128" height="64"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <div class="graph-header">
+            <h4><span>📈</span> Position $x(t)$ & Velocity $v(t)$ vs. Time</h4>
+            <div class="graph-legend">
+              <span style="color:#f85149;">━ Position x(t)</span>
+              <span style="color:#d29922;">━ Velocity v(t)</span>
+            </div>
+          </div>
+          <canvas id="c1_graph" class="sync-graph-canvas" width="600" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="control-box">
+          <h4>Kinematic Parameters</h4>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Linear Velocity (speed)<small>Step size added each frame</small></div>
+            <input type="range" id="c1_speed" min="0.2" max="3.0" step="0.1" value="0.8">
+            <span class="c-slider-val" id="c1_speed_val">0.8 px/f</span>
+          </div>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Travel Range (±X limit)<small>Boundary before reversing</small></div>
+            <input type="range" id="c1_range" min="10" max="25" value="18">
+            <span class="c-slider-val" id="c1_range_val">±18 px</span>
+          </div>
+        </div>
+
+        <div class="explainer-box">
+          <h4><span>🔬</span> C++ Code & Dynamic Execution Breakdown</h4>
+          <div class="cpp-eval-card">
+            <div class="cpp-tag">Line 1: Actual Arduino C++ Code Expression</div>
+            <div class="cpp-code-line">
+              <span class="var">eyeX</span> += <span class="var">speed</span>;
+              <span class="kw">if</span> (<span class="var">eyeX</span> &gt;= <span class="num">18</span> || <span class="var">eyeX</span> &lt;= -<span class="num">18</span>) <span class="var">speed</span> = -<span class="var">speed</span>;
+            </div>
+            <div class="cpp-tag">Line 2: Real-Time Dynamic Value Evaluation</div>
+            <div class="dynamic-eval-line" id="c1_dyn_line">
+              eyeX = <span class="dyn-cur">0.00</span> + (<span class="dyn-alpha">+0.80</span>) = <span class="dyn-res">0.80 px</span> (limit = ±18 px)
+            </div>
+          </div>
+          <div class="iteration-table-wrap">
+            <table class="iteration-audit-table">
+              <thead>
+                <tr><th>Frame #</th><th>Current X</th><th>Step Added</th><th>New X</th><th>State</th></tr>
+              </thead>
+              <tbody id="c1_table_body"></tbody>
+            </table>
+          </div>
+          <div class="iteration-narrative" id="c1_narrative">
+            Notice how constant speed keeps moving at the exact same rate until colliding with the boundary, where it abruptly reverses without decelerating.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONCEPT 2: SMOOTH LERP EYE (Lesson 6) -->
+    <div id="tab-lerp" class="lab-card">
+      <div class="card-top">
+        <div class="card-title-group">
+          <h2><span>⚡</span> Lesson 6 — Smooth Moving Eye (Exponential Smoothing / LERP)</h2>
+          <p>The core animation formula: move a fraction $\alpha$ of the remaining distance every frame.</p>
+        </div>
+      </div>
+
+      <div class="display-split-panel">
+        <div class="oled-bezel-5x">
+          <div class="oled-header-5x">
+            <span>SSD1306 OLED (5x Scale: 640×320 px)</span>
+            <span>Exponential Smoothing LERP</span>
+          </div>
+          <canvas id="c2_oled" class="oled-screen-5x" width="128" height="64"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <div class="graph-header">
+            <h4><span>📈</span> Asymptotic Deceleration: Distance Decay $d(t) = d_0(1-\alpha)^t$</h4>
+            <div class="graph-legend">
+              <span style="color:#3fb950;">━ Position x(t)</span>
+              <span style="color:#d29922;">┅ Target</span>
+              <span style="color:#58a6ff;">━ Remaining Distance</span>
+            </div>
+          </div>
+          <canvas id="c2_graph" class="sync-graph-canvas" width="600" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="control-box">
+          <h4>LERP Controls</h4>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Smoothing Factor (speed α)<small>0.05=sleepy, 0.3=natural, 0.7=twitchy</small></div>
+            <input type="range" id="c2_alpha" min="0.05" max="0.75" step="0.05" value="0.30">
+            <span class="c-slider-val" id="c2_alpha_val">0.30</span>
+          </div>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Target X (target)<small>Destination for eyes</small></div>
+            <input type="range" id="c2_tgt" min="-22" max="22" value="18">
+            <span class="c-slider-val" id="c2_tgt_val">+18 px</span>
+          </div>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Auto Ping-Pong Target<small>Glides right, eases to stop, then glides left</small></div>
+            <input type="checkbox" id="c2_pingpong" checked style="width:18px; height:18px; cursor:pointer;">
+          </div>
+        </div>
+
+        <div class="explainer-box">
+          <h4><span>🔬</span> C++ Code & Dynamic Execution Breakdown</h4>
+          <div class="cpp-eval-card">
+            <div class="cpp-tag">Line 1: Actual Arduino C++ Code Expression</div>
+            <div class="cpp-code-line">
+              <span class="var">current</span> += (<span class="var">target</span> - <span class="var">current</span>) * <span class="var">speed</span>;
+            </div>
+            <div class="cpp-tag">Line 2: Real-Time Dynamic Value Evaluation</div>
+            <div class="dynamic-eval-line" id="c2_dyn_line">
+              current = <span class="dyn-cur">0.00</span> + (<span class="dyn-tgt">+18.00</span> - <span class="dyn-cur">0.00</span>) * <span class="dyn-alpha">0.30</span> = <span class="dyn-res">5.40 px</span>
+            </div>
+          </div>
+          <div class="iteration-table-wrap">
+            <table class="iteration-audit-table">
+              <thead>
+                <tr><th>Frame #</th><th>Current X</th><th>Distance Left</th><th>Move 30%</th><th>New Position</th></tr>
+              </thead>
+              <tbody id="c2_table_body"></tbody>
+            </table>
+          </div>
+          <div class="iteration-narrative" id="c2_narrative">
+            Notice how the step size shrinks each frame as the remaining distance decays exponentially. The eye feathers gently to rest without overshooting!
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONCEPT 3: BLINKING EYE (Lesson 7) -->
+    <div id="tab-blink" class="lab-card">
+      <div class="card-top">
+        <div class="card-title-group">
+          <h2><span>👁️</span> Lesson 7 — Blinking Eye & Saccade Timers</h2>
+          <p>Blinking squashes eye height around the fixed horizontal center line using LERP on a normalized openness parameter.</p>
+        </div>
+      </div>
+
+      <div class="display-split-panel">
+        <div class="oled-bezel-5x">
+          <div class="oled-header-5x">
+            <span>SSD1306 OLED (5x Scale: 640×320 px)</span>
+            <span id="c3_screen_status">Eyes Fully Open</span>
+          </div>
+          <canvas id="c3_oled" class="oled-screen-5x" width="128" height="64"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <div class="graph-header">
+            <h4><span>📈</span> Openness & Height Envelope vs. Time</h4>
+            <div class="graph-legend">
+              <span style="color:#00d4ff;">━ Openness [0..1]</span>
+              <span style="color:#f85149;">━ Height [3..40px]</span>
+            </div>
+          </div>
+          <canvas id="c3_graph" class="sync-graph-canvas" width="600" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="control-box">
+          <h4>Blink Engine & Slow-Motion</h4>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Playback Speed<small>Inspect squashing in slow-mo</small></div>
+            <div style="display:flex; gap:6px;">
+              <button class="c-btn btn-play" id="c3_speed_1x">1.0x</button>
+              <button class="c-btn" id="c3_speed_half">0.5x</button>
+              <button class="c-btn" id="c3_speed_slow">0.2x</button>
+            </div>
+          </div>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Manual Openness Scrubber<small>Drag to freeze & inspect any height</small></div>
+            <input type="range" id="c3_manual_open" min="0" max="1" step="0.02" value="1.0">
+            <span class="c-slider-val" id="c3_manual_open_val">1.00</span>
+          </div>
+          <div style="margin-top:10px;">
+            <div style="font-size:0.75rem; color:var(--text-muted); display:flex; justify-content:space-between;">
+              <span>Countdown to Next Blink:</span>
+              <span id="c3_countdown_text" style="color:var(--accent-cyan); font-family:monospace;">2.0s</span>
+            </div>
+            <div class="countdown-bar-container">
+              <div class="countdown-bar-fill" id="c3_countdown_bar"></div>
+            </div>
+          </div>
+          <button class="c-btn btn-step" id="c3_btn_trigger" style="margin-top:14px; width:100%;">Trigger Blink Now</button>
+        </div>
+
+        <div class="explainer-box">
+          <h4><span>🔬</span> C++ Code & Dynamic Execution Breakdown</h4>
+          <div class="cpp-eval-card">
+            <div class="cpp-tag">Line 1: Actual Arduino C++ Code Expression</div>
+            <div class="cpp-code-line">
+              <span class="type">int</span> <span class="var">h</span> = <span class="fn">max</span>(<span class="num">3</span>, (<span class="type">int</span>)(<span class="var">curH</span> * <span class="var">openness</span>));
+              <span class="fn">roundEye</span>(<span class="var">cx</span>, <span class="var">cy</span>, <span class="var">w</span>, <span class="var">h</span>); <span class="cm">// top = cy - h/2</span>
+            </div>
+            <div class="cpp-tag">Line 2: Real-Time Dynamic Value Evaluation</div>
+            <div class="dynamic-eval-line" id="c3_dyn_line">
+              h = max(3, (int)(40 * <span class="dyn-cur">1.00</span>)) = <span class="dyn-res">40 px</span> | top = 32 - 20 = 12 px (span: y = [12..52])
+            </div>
+          </div>
+          <div class="iteration-table-wrap">
+            <table class="iteration-audit-table">
+              <thead>
+                <tr><th>Phase</th><th>tgtOpen</th><th>openness</th><th>Eye Height</th><th>Vertical Bounds</th></tr>
+              </thead>
+              <tbody id="c3_table_body"></tbody>
+            </table>
+          </div>
+          <div class="iteration-narrative" id="c3_narrative">
+            Notice how recalculating $y_0 = 32 - h/2$ on every frame ensures the eye squashes symmetrically toward the middle axis rather than falling downwards.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONCEPT 4: BOUNCING SINE WAVE (Lesson 9) -->
+    <div id="tab-sine" class="lab-card">
+      <div class="card-top">
+        <div class="card-title-group">
+          <h2><span>🌊</span> Lesson 9 — Bouncing with a Sine Wave</h2>
+          <p>Smooth, perpetual harmonic oscillation: $y(t) = y_0 + A \cdot \sin(\omega t)$.</p>
+        </div>
+      </div>
+
+      <div class="display-split-panel">
+        <div class="oled-bezel-5x">
+          <div class="oled-header-5x">
+            <span>SSD1306 OLED (5x Scale: 640×320 px)</span>
+            <span>Harmonic Oscillation Happy Bounce</span>
+          </div>
+          <canvas id="c4_oled" class="oled-screen-5x" width="128" height="64"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <div class="graph-header">
+            <h4><span>📈</span> Live Oscilloscope Wave & Rotating Phasor</h4>
+            <div class="graph-legend">
+              <span style="color:#ff7b72;">━ Rotating Phasor</span>
+              <span style="color:#39c5cf;">━ Wave y(t)</span>
+            </div>
+          </div>
+          <canvas id="c4_graph" class="sync-graph-canvas" width="600" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="control-box">
+          <h4>Wave Knobs</h4>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Amplitude A (Pixels)<small>Bounce displacement</small></div>
+            <input type="range" id="c4_amp" min="1" max="12" value="4">
+            <span class="c-slider-val" id="c4_amp_val">4 px</span>
+          </div>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Angular Frequency ω<small>Speed of oscillation</small></div>
+            <input type="range" id="c4_omega" min="0.003" max="0.030" step="0.001" value="0.012">
+            <span class="c-slider-val" id="c4_omega_val">0.012 rad/ms</span>
+          </div>
+        </div>
+
+        <div class="explainer-box">
+          <h4><span>🔬</span> C++ Code & Dynamic Execution Breakdown</h4>
+          <div class="cpp-eval-card">
+            <div class="cpp-tag">Line 1: Actual Arduino C++ Code Expression</div>
+            <div class="cpp-code-line">
+              <span class="type">int</span> <span class="var">cy</span> = <span class="num">32</span> + (<span class="type">int</span>)(<span class="fn">sin</span>(<span class="var">nowMs</span> * <span class="num">0.012</span>) * <span class="num">4</span>);
+            </div>
+            <div class="cpp-tag">Line 2: Real-Time Dynamic Value Evaluation</div>
+            <div class="dynamic-eval-line" id="c4_dyn_line">
+              cy = 32 + (int)(sin(<span class="dyn-cur">0.00 rad</span>) * 4) = 32 + (int)(<span class="dyn-alpha">0.000</span> * 4) = <span class="dyn-res">32 px</span>
+            </div>
+          </div>
+          <div class="iteration-table-wrap">
+            <table class="iteration-audit-table">
+              <thead>
+                <tr><th>Time (ms)</th><th>Angle θ (rad)</th><th>sin(θ)</th><th>Displacement (Δy)</th><th>Center Y</th></tr>
+              </thead>
+              <tbody id="c4_table_body"></tbody>
+            </table>
+          </div>
+          <div class="iteration-narrative" id="c4_narrative">
+            The $\sin()$ function produces harmonic deceleration at the crest and trough, giving Mochi a smooth, weightless bounce.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONCEPT 5: RANDOM LOOKING (Lesson 8) -->
+    <div id="tab-saccade" class="lab-card">
+      <div class="card-top">
+        <div class="card-title-group">
+          <h2><span>👀</span> Lesson 8 — Random Looking (Stochastic Saccades)</h2>
+          <p>Combining non-blocking stochastic timers with LERP smoothing gives Mochi an organic mind of its own.</p>
+        </div>
+      </div>
+
+      <div class="display-split-panel">
+        <div class="oled-bezel-5x">
+          <div class="oled-header-5x">
+            <span>SSD1306 OLED (5x Scale: 640×320 px)</span>
+            <span>Stochastic Target Saccades</span>
+          </div>
+          <canvas id="c5_oled" class="oled-screen-5x" width="128" height="64"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <div class="graph-header">
+            <h4><span>📈</span> 2D Gaze Trajectory & Target Waypoints</h4>
+            <div class="graph-legend">
+              <span style="color:#d29922;">◉ Target Waypoint</span>
+              <span style="color:#00d4ff;">━ Gaze Path (curX, curY)</span>
+            </div>
+          </div>
+          <canvas id="c5_graph" class="sync-graph-canvas" width="600" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="control-box">
+          <h4>Saccade Parameters</h4>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Horizontal Range (tgtX)<small>Bounding box</small></div>
+            <input type="range" id="c5_rx" min="5" max="18" value="10">
+            <span class="c-slider-val" id="c5_rx_val">±10 px</span>
+          </div>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Vertical Range (tgtY)<small>Bounding box</small></div>
+            <input type="range" id="c5_ry" min="3" max="12" value="6">
+            <span class="c-slider-val" id="c5_ry_val">±6 px</span>
+          </div>
+          <button class="c-btn btn-step" id="c5_btn_newtgt" style="margin-top:10px; width:100%;">Pick New Target Now</button>
+        </div>
+
+        <div class="explainer-box">
+          <h4><span>🔬</span> C++ Code & Dynamic Execution Breakdown</h4>
+          <div class="cpp-eval-card">
+            <div class="cpp-tag">Line 1: Actual Arduino C++ Code Expression</div>
+            <div class="cpp-code-line">
+              <span class="var">curX</span> += (<span class="var">tgtX</span> - <span class="var">curX</span>) * <span class="num">0.3</span>;
+              <span class="var">curY</span> += (<span class="var">tgtY</span> - <span class="var">curY</span>) * <span class="num">0.3</span>;
+            </div>
+            <div class="cpp-tag">Line 2: Real-Time Dynamic Value Evaluation</div>
+            <div class="dynamic-eval-line" id="c5_dyn_line">
+              curX = <span class="dyn-cur">0.0</span> \to tgtX = <span class="dyn-tgt">0</span> | curY = <span class="dyn-cur">0.0</span> \to tgtY = <span class="dyn-tgt">0</span>
+            </div>
+          </div>
+          <div class="iteration-table-wrap">
+            <table class="iteration-audit-table">
+              <thead>
+                <tr><th>Timer (ms)</th><th>Gaze (curX, curY)</th><th>Target (tgtX, tgtY)</th><th>Distance</th><th>Action</th></tr>
+              </thead>
+              <tbody id="c5_table_body"></tbody>
+            </table>
+          </div>
+          <div class="iteration-narrative" id="c5_narrative">
+            Every 1.0 to 2.5 seconds, a random target is chosen. LERP smoothly glides the eyes there without needing animation frames.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONCEPT 6: THE MASK TRICK (Lesson 10) -->
+    <div id="tab-mask" class="lab-card">
+      <div class="card-top">
+        <div class="card-title-group">
+          <h2><span>✂️</span> Lesson 10 — Angry & Sad Eyes (The Mask Trick / CSG)</h2>
+          <p>Constructive Solid Geometry: draw solid white eyes first, then carve emotional eyelids by cutting away with black triangles.</p>
+        </div>
+      </div>
+
+      <div class="display-split-panel">
+        <div class="oled-bezel-5x">
+          <div class="oled-header-5x">
+            <span>SSD1306 OLED (5x Scale: 640×320 px)</span>
+            <span>Subtractive Boolean Rasterization</span>
+          </div>
+          <canvas id="c6_oled" class="oled-screen-5x" width="128" height="64"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <div class="graph-header">
+            <h4><span>📐</span> Mask Geometry & Boolean Subtraction Breakdown</h4>
+            <div class="graph-legend">
+              <span style="color:#00d4ff;">Base Eye</span>
+              <span style="color:#f85149;">Cutting Triangle</span>
+              <span style="color:#3fb950;">Composite Result</span>
+            </div>
+          </div>
+          <canvas id="c6_graph" class="sync-graph-canvas" width="600" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="control-box">
+          <h4>Eyelid Cut Parameters</h4>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Slant Drop Depth<small>Fraction of eye height</small></div>
+            <input type="range" id="c6_drop" min="0.1" max="0.75" step="0.05" value="0.40">
+            <span class="c-slider-val" id="c6_drop_val">40%</span>
+          </div>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Emotion Selection</div>
+            <div style="display:flex; gap:6px;">
+              <button class="c-btn btn-play" id="c6_btn_angry">Angry (Inner Cut)</button>
+              <button class="c-btn" id="c6_btn_sad">Sad (Outer Cut)</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="explainer-box">
+          <h4><span>🔬</span> C++ Code & Dynamic Execution Breakdown</h4>
+          <div class="cpp-eval-card">
+            <div class="cpp-tag">Line 1: Actual Arduino C++ Code Expression</div>
+            <div class="cpp-code-line">
+              <span class="type">int</span> <span class="var">top</span> = <span class="var">cy</span> - <span class="var">h</span> / <span class="num">2</span>, <span class="var">drop</span> = <span class="var">h</span> * <span class="num">4</span> / <span class="num">10</span>;
+              <span class="var">oled</span>.<span class="fn">fillTriangle</span>(<span class="var">lL</span> - <span class="num">1</span>, <span class="var">top</span> - <span class="num">1</span>, <span class="var">lR</span> + <span class="num">1</span>, <span class="var">top</span> - <span class="num">1</span>, <span class="var">lR</span> + <span class="num">1</span>, <span class="var">top</span> + <span class="var">drop</span>, <span class="num">BLACK</span>);
+            </div>
+            <div class="cpp-tag">Line 2: Real-Time Dynamic Value Evaluation</div>
+            <div class="dynamic-eval-line" id="c6_dyn_line">
+              top = 32 - 20 = 12 px, drop = 40 * 0.40 = <span class="dyn-res">16 px</span> -> Cut vertex = (lR + 1, 28 px)
+            </div>
+          </div>
+          <div class="iteration-table-wrap">
+            <table class="iteration-audit-table">
+              <thead>
+                <tr><th>Eye</th><th>Vertex 1</th><th>Vertex 2</th><th>Vertex 3 (Slant Point)</th><th>Cut Region</th></tr>
+              </thead>
+              <tbody id="c6_table_body"></tbody>
+            </table>
+          </div>
+          <div class="iteration-narrative" id="c6_narrative">
+            Because microcontrollers lack alpha clipping paths, drawing in <b>BLACK</b> acts as an eraser to carve sharp angles out of existing shapes.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONCEPT 7: JITTER & EMOTIONAL NOISE (Lesson 10) -->
+    <div id="tab-jitter" class="lab-card">
+      <div class="card-top">
+        <div class="card-title-group">
+          <h2><span>⚡</span> Lesson 10 — Jitter & Emotional Noise Vibration</h2>
+          <p>Pseudo-random stochastic micro-vibration: tricking the human eye into perceiving intense fury or shivering.</p>
+        </div>
+      </div>
+
+      <div class="display-split-panel">
+        <div class="oled-bezel-5x">
+          <div class="oled-header-5x">
+            <span>SSD1306 OLED (5x Scale: 640×320 px)</span>
+            <span>Angry Jitter / Fury Vibration</span>
+          </div>
+          <canvas id="c_j_oled" class="oled-screen-5x" width="128" height="64"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <div class="graph-header">
+            <h4><span>📈</span> Stochastic Noise Waveform $\Delta x(t) \sim \mathcal{U}(-A, +A)$</h4>
+            <div class="graph-legend">
+              <span style="color:#f85149;">━ Uniform Noise Δx(t)</span>
+              <span style="color:#d29922;">┅ Amplitude Envelope (±A)</span>
+            </div>
+          </div>
+          <canvas id="c_j_graph" class="sync-graph-canvas" width="600" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="control-box">
+          <h4>Vibration Parameters</h4>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Jitter Amplitude (A)<small>Max displacement in pixels</small></div>
+            <input type="range" id="c_j_amp" min="1" max="6" value="2">
+            <span class="c-slider-val" id="c_j_amp_val">±2 px</span>
+          </div>
+        </div>
+
+        <div class="explainer-box">
+          <h4><span>🔬</span> C++ Code & Dynamic Execution Breakdown</h4>
+          <div class="cpp-eval-card">
+            <div class="cpp-tag">Line 1: Actual Arduino C++ Code Expression</div>
+            <div class="cpp-code-line">
+              <span class="type">int</span> <span class="var">dx</span> = (<span class="type">int</span>)<span class="var">curX</span> + <span class="fn">random</span>(-<span class="num">2</span>, <span class="num">3</span>); <span class="cm">// random shake</span>
+            </div>
+            <div class="cpp-tag">Line 2: Real-Time Dynamic Value Evaluation</div>
+            <div class="dynamic-eval-line" id="c_j_dyn_line">
+              dx = 0 + (<span class="dyn-alpha">+1 px</span>) = <span class="dyn-res">1 px</span> (Left Eye: 36 + 1 = 37 px)
+            </div>
+          </div>
+          <div class="iteration-table-wrap">
+            <table class="iteration-audit-table">
+              <thead>
+                <tr><th>Frame #</th><th>Base X</th><th>Random Noise (Δx)</th><th>Display X</th><th>Visual Perception</th></tr>
+              </thead>
+              <tbody id="c_j_table_body"></tbody>
+            </table>
+          </div>
+          <div class="iteration-narrative" id="c_j_narrative">
+            Pseudo-random number generation introduces high-frequency noise. Because the eyes shift rapidly around their resting position, persistence of vision makes the face appear to tremble with rage!
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONCEPT 8: COMPOUND SHAPES & PULSING (Lesson 11) -->
+    <div id="tab-compound" class="lab-card">
+      <div class="card-top">
+        <div class="card-title-group">
+          <h2><span>❤️</span> Lesson 11 — Compound Shapes (Happy Arch & Pulsing Heart)</h2>
+          <p>Combining circles, triangles, and sine-driven scale factors creates complex organic symbols like pulsing hearts.</p>
+        </div>
+      </div>
+
+      <div class="display-split-panel">
+        <div class="oled-bezel-5x">
+          <div class="oled-header-5x">
+            <span>SSD1306 OLED (5x Scale: 640×320 px)</span>
+            <span>Dynamic Shape Synthesis</span>
+          </div>
+          <canvas id="c7_oled" class="oled-screen-5x" width="128" height="64"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <div class="graph-header">
+            <h4><span>📈</span> Heartbeat Pulsing Scale Factor $s(t) = 10 + 3\sin(0.01 t)$</h4>
+            <div class="graph-legend">
+              <span style="color:#f85149;">━ Scale Factor s(t)</span>
+              <span style="color:#d29922;">┅ Baseline (10px)</span>
+            </div>
+          </div>
+          <canvas id="c7_graph" class="sync-graph-canvas" width="600" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="control-box">
+          <h4>Shape Geometry Knobs</h4>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Active Compound Shape</div>
+            <div style="display:flex; gap:6px;">
+              <button class="c-btn btn-play" id="c7_btn_heart">Love Heart</button>
+              <button class="c-btn" id="c7_btn_arch">Happy Arch</button>
+            </div>
+          </div>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Explode Components Slider<small>Pull apart primitive pieces</small></div>
+            <input type="range" id="c7_explode" min="0" max="30" value="0">
+            <span class="c-slider-val" id="c7_explode_val">0 px</span>
+          </div>
+        </div>
+
+        <div class="explainer-box">
+          <h4><span>🔬</span> C++ Code & Dynamic Execution Breakdown</h4>
+          <div class="cpp-eval-card">
+            <div class="cpp-tag">Line 1: Actual Arduino C++ Code Expression</div>
+            <div class="cpp-code-line">
+              <span class="type">int</span> <span class="var">s</span> = <span class="num">10</span> + (<span class="type">int</span>)(<span class="num">3</span> * <span class="fn">sin</span>(<span class="var">nowMs</span> * <span class="num">0.01</span>));
+              <span class="var">oled</span>.<span class="fn">fillCircle</span>(<span class="var">cx</span> - <span class="var">s</span> / <span class="num">2</span>, <span class="var">cy</span> - <span class="var">s</span> / <span class="num">4</span>, <span class="var">s</span> / <span class="num">2</span> + <span class="num">1</span>, <span class="num">WHITE</span>);
+            </div>
+            <div class="cpp-tag">Line 2: Real-Time Dynamic Value Evaluation</div>
+            <div class="dynamic-eval-line" id="c7_dyn_line">
+              s = 10 + (int)(3 * <span class="dyn-cur">0.00</span>) = <span class="dyn-res">10 px</span> -> Lobe Radius = 6 px, Triangle Base = 20 px
+            </div>
+          </div>
+          <div class="iteration-table-wrap">
+            <table class="iteration-audit-table">
+              <thead>
+                <tr><th>Component</th><th>Primitive</th><th>Coordinates</th><th>Current Dimension</th></tr>
+              </thead>
+              <tbody id="c7_table_body"></tbody>
+            </table>
+          </div>
+          <div class="iteration-narrative" id="c7_narrative">
+            Drag the <b>Explode Components Slider</b> to pull the circular lobes away from the bottom triangle!
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONCEPT 9: PHASE & MODULO (Lesson 12) -->
+    <div id="tab-phase" class="lab-card">
+      <div class="card-top">
+        <div class="card-title-group">
+          <h2><span>💤</span> Lesson 12 — Floating Z's & Tears (Phase & Modulo Arithmetic)</h2>
+          <p>Using the modulo operator (%) to loop time into an infinite sawtooth wave with desynchronized phase offsets.</p>
+        </div>
+      </div>
+
+      <div class="display-split-panel">
+        <div class="oled-bezel-5x">
+          <div class="oled-header-5x">
+            <span>SSD1306 OLED (5x Scale: 640×320 px)</span>
+            <span>Desynchronized Sawtooth Particle Streams</span>
+          </div>
+          <canvas id="c8_oled" class="oled-screen-5x" width="128" height="64"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <div class="graph-header">
+            <h4><span>📈</span> Sawtooth Wave $(t/s + \Delta\phi_i) \pmod{100}$ with 3 Phase Pointers</h4>
+            <div class="graph-legend">
+              <span style="color:#58a6ff;">● Z₀ (0%)</span>
+              <span style="color:#3fb950;">● Z₁ (+33%)</span>
+              <span style="color:#bc8cff;">● Z₂ (+66%)</span>
+            </div>
+          </div>
+          <canvas id="c8_graph" class="sync-graph-canvas" width="600" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="control-box">
+          <h4>Modulo Phase Knobs</h4>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Speed Divisor<small>Lower = faster drift</small></div>
+            <input type="range" id="c8_speed" min="15" max="75" value="40">
+            <span class="c-slider-val" id="c8_speed_val">40 ms/step</span>
+          </div>
+          <div class="c-slider-row">
+            <div class="c-slider-label">Phase Offset Spacing (Δφ)<small>Separation between particles</small></div>
+            <input type="range" id="c8_offset" min="15" max="50" value="33">
+            <span class="c-slider-val" id="c8_offset_val">33%</span>
+          </div>
+        </div>
+
+        <div class="explainer-box">
+          <h4><span>🔬</span> C++ Code & Dynamic Execution Breakdown</h4>
+          <div class="cpp-eval-card">
+            <div class="cpp-tag">Line 1: Actual Arduino C++ Code Expression</div>
+            <div class="cpp-code-line">
+              <span class="type">int</span> <span class="var">phase</span> = (<span class="var">nowMs</span> / <span class="num">40</span> + <span class="var">i</span> * <span class="num">33</span>) % <span class="num">100</span>;
+              <span class="type">int</span> <span class="var">zy</span> = <span class="num">28</span> - <span class="var">phase</span> * <span class="num">28</span> / <span class="num">100</span>;
+            </div>
+            <div class="cpp-tag">Line 2: Real-Time Dynamic Value Evaluation</div>
+            <div class="dynamic-eval-line" id="c8_dyn_line">
+              Z0: phase = (0) % 100 = <span class="dyn-res">0</span> (zy = 28 px) | Z1: phase = <span class="dyn-res">33</span> (zy = 19 px) | Z2: phase = <span class="dyn-res">66</span> (zy = 10 px)
+            </div>
+          </div>
+          <div class="iteration-table-wrap">
+            <table class="iteration-audit-table">
+              <thead>
+                <tr><th>Particle</th><th>Phase [0..99]</th><th>Progress %</th><th>Coordinates (X, Y)</th><th>Glyph Size</th></tr>
+              </thead>
+              <tbody id="c8_table_body"></tbody>
+            </table>
+          </div>
+          <div class="iteration-narrative" id="c8_narrative">
+            The modulo operator converts infinite time into a perpetual looping stream of particles without dynamically allocating or freeing memory objects.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONCEPT 10: COMPLETE MOCHI (FSM, Lessons 13-15) -->
+    <div id="tab-master" class="lab-card">
+      <div class="card-top">
+        <div class="card-title-group">
+          <h2><span>🎮</span> Lessons 13–15 — The Complete Mochi (Finite State Machine)</h2>
+          <p>The integrated architecture: Active-low hardware button + Discrete FSM + 30 FPS non-blocking Game Loop.</p>
+        </div>
+      </div>
+
+      <div class="display-split-panel">
+        <div class="oled-bezel-5x">
+          <div class="oled-header-5x">
+            <span>SSD1306 OLED (5x Scale: 640×320 px)</span>
+            <span>Click to Aim Gaze Manual Target</span>
+          </div>
+          <canvas id="c9_oled" class="oled-screen-5x" width="128" height="64"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <div class="graph-header">
+            <h4><span>🤖</span> Live State Machine Transition Graph</h4>
+            <div class="graph-legend">
+              <span style="color:#3fb950;">● Active State</span>
+              <span style="color:#58a6ff;">━ Transition Edge</span>
+            </div>
+          </div>
+          <canvas id="c9_graph" class="sync-graph-canvas" width="600" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card-bottom">
+        <div class="control-box">
+          <h4>FSM Triggers & Inputs</h4>
+          <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px;">
+            <button class="c-btn btn-play" onclick="c9SetMood(0)">Normal (n)</button>
+            <button class="c-btn" onclick="c9SetMood(1)">Happy (h)</button>
+            <button class="c-btn" onclick="c9SetMood(2)">Angry (a)</button>
+            <button class="c-btn" onclick="c9SetMood(3)">Sad (d)</button>
+            <button class="c-btn" onclick="c9SetMood(4)">Sleepy (s)</button>
+            <button class="c-btn" onclick="c9SetMood(5)">Love (l)</button>
+          </div>
+          <button class="c-btn" id="c9_btn_flash" style="background:#8957e5; border-color:#ab7df8; width:100%; font-weight:bold; padding:10px;">
+            ⚡ Press FLASH Button D3 (Active-Low Interrupt)
+          </button>
+        </div>
+
+        <div class="explainer-box">
+          <h4><span>🔬</span> C++ Code & Dynamic Execution Breakdown</h4>
+          <div class="cpp-eval-card">
+            <div class="cpp-tag">Line 1: Actual Arduino C++ Code Expression</div>
+            <div class="cpp-code-line">
+              <span class="fn">updateBehavior</span>(); <span class="cm">// 1. Decide (FSM mood, blink timer, target gaze)</span><br>
+              <span class="fn">animate</span>();        <span class="cm">// 2. Move (LERP: curX += (tgtX - curX)*0.3)</span><br>
+              <span class="fn">drawEyes</span>();       <span class="cm">// 3. Draw (switch(mood): roundEye, masks, hearts)</span>
+            </div>
+            <div class="cpp-tag">Line 2: Real-Time Dynamic Value Evaluation</div>
+            <div class="dynamic-eval-line" id="c9_dyn_line">
+              Mood = <span class="dyn-cur">NORMAL</span> | Gaze = (<span class="dyn-tgt">+0.0</span>, <span class="dyn-tgt">+0.0</span>) | Openness = <span class="dyn-alpha">1.00</span> (h = 40px)
+            </div>
+          </div>
+          <div class="iteration-table-wrap">
+            <table class="iteration-audit-table">
+              <thead>
+                <tr><th>Active State</th><th>Gaze (X, Y)</th><th>Eye Size</th><th>Openness</th><th>Hold Timeout</th></tr>
+              </thead>
+              <tbody id="c9_table_body"></tbody>
+            </table>
+          </div>
+          <div class="iteration-narrative" id="c9_narrative">
+            Every component you learned harmoniously cooperates inside the 33ms non-blocking frame clock!
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// =========================================================================
+//  TAB NAVIGATION SYSTEM & SIDEBAR CONTROLLER SYNC
+// =========================================================================
+const navButtons = document.querySelectorAll('.nav-item-btn');
+const labCards = document.querySelectorAll('.lab-card');
+
+let currentActiveConceptId = 'tab-linear';
+
+const CONCEPT_META = {
+  'tab-linear':   { name: '1. Linear Move',      ref: () => c1 },
+  'tab-lerp':     { name: '2. Smooth LERP',      ref: () => c2 },
+  'tab-blink':    { name: '3. Blinking Eye',     ref: () => c3 },
+  'tab-sine':     { name: '4. Bouncing Sine',    ref: () => c4 },
+  'tab-saccade':  { name: '5. Random Gaze',      ref: () => c5 },
+  'tab-mask':     { name: '6. The Mask Trick',   ref: () => c6 },
+  'tab-jitter':   { name: '7. Jitter Vibration', ref: () => cJ },
+  'tab-compound': { name: '8. Compound Shapes',  ref: () => c7 },
+  'tab-phase':    { name: '9. Phase & Modulo',   ref: () => c8 },
+  'tab-master':   { name: '10. Complete Mochi',  ref: () => c9 }
+};
+
+navButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    navButtons.forEach(b => b.classList.remove('active'));
+    labCards.forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    currentActiveConceptId = btn.dataset.tab;
+    const target = document.getElementById(currentActiveConceptId);
+    if (target) target.classList.add('active');
+
+    // Update Sidebar Concept Header
+    document.getElementById('sb_concept_name').textContent = CONCEPT_META[currentActiveConceptId].name;
+    syncSidebarControls();
+  });
+});
+
+function syncSidebarControls() {
+  const activeObj = CONCEPT_META[currentActiveConceptId].ref();
+  const playBtn = document.getElementById('sb_btn_play');
+  const timerBadge = document.getElementById('sb_timer_badge');
+
+  if (activeObj.running !== undefined) {
+    playBtn.textContent = activeObj.running ? '⏸ Pause' : '▶ Start';
+    playBtn.classList.toggle('btn-pause', activeObj.running);
+    timerBadge.classList.toggle('paused', !activeObj.running);
+  } else {
+    playBtn.textContent = '▶ Active';
+    playBtn.classList.remove('btn-pause');
+    timerBadge.classList.remove('paused');
+  }
+}
+
+// Sidebar Master Play / Step / Reset routing
+document.getElementById('sb_btn_play').addEventListener('click', () => {
+  const activeObj = CONCEPT_META[currentActiveConceptId].ref();
+  if (activeObj.playBtn) activeObj.playBtn.click();
+  syncSidebarControls();
+});
+document.getElementById('sb_btn_step').addEventListener('click', () => {
+  const activeObj = CONCEPT_META[currentActiveConceptId].ref();
+  if (activeObj.stepBtn) activeObj.stepBtn.click();
+  syncSidebarControls();
+});
+document.getElementById('sb_btn_reset').addEventListener('click', () => {
+  const activeObj = CONCEPT_META[currentActiveConceptId].ref();
+  if (activeObj.resetBtn) activeObj.resetBtn.click();
+  syncSidebarControls();
+});
+
+function clearOledCanvas(ctx, w=128, h=64) {
+  ctx.fillStyle = '#010408';
+  ctx.fillRect(0, 0, w, h);
+}
+
+// =========================================================================
+//  CONCEPT 1: LINEAR MOVING EYE (Lesson 5)
+// =========================================================================
+const c1 = {
+  running: false,
+  timeMs: 0,
+  frame: 0,
+  x: 0,
+  vel: 0.8,
+  range: 18,
+  history: [],
+  tableHistory: [],
+  maxHistory: 100,
+  oled: document.getElementById('c1_oled'),
+  graph: document.getElementById('c1_graph'),
+  oledCtx: document.getElementById('c1_oled').getContext('2d'),
+  graphCtx: document.getElementById('c1_graph').getContext('2d'),
+  speedSlider: document.getElementById('c1_speed'),
+  rangeSlider: document.getElementById('c1_range'),
+  dynLine: document.getElementById('c1_dyn_line'),
+  tbody: document.getElementById('c1_table_body'),
+  narrative: document.getElementById('c1_narrative')
+};
+
+function c1Step(dt = 33) {
+  c1.timeMs += dt;
+  c1.frame++;
+  c1.range = parseInt(c1.rangeSlider.value);
+  const speedMag = parseFloat(c1.speedSlider.value);
+  c1.vel = speedMag * (c1.vel >= 0 ? 1 : -1);
+
+  const prevX = c1.x;
+  c1.x += c1.vel;
+
+  let reversed = false;
+  if (c1.x >= c1.range) {
+    c1.x = c1.range;
+    c1.vel = -speedMag;
+    reversed = true;
+  } else if (c1.x <= -c1.range) {
+    c1.x = -c1.range;
+    c1.vel = speedMag;
+    reversed = true;
+  }
+
+  c1.history.push({ time: c1.timeMs, x: c1.x, vel: c1.vel });
+  if (c1.history.length > c1.maxHistory) c1.history.shift();
+
+  c1.tableHistory.unshift({
+    frame: c1.frame,
+    curX: prevX,
+    step: c1.vel,
+    newX: c1.x,
+    reversed: reversed
+  });
+  if (c1.tableHistory.length > 5) c1.tableHistory.pop();
+
+  c1Render(prevX, reversed);
+}
+
+function c1Render(prevX=0, reversed=false) {
+  if (currentActiveConceptId === 'tab-linear') {
+    document.getElementById('sb_timer_val').textContent = `${c1.timeMs} ms (Frame #${c1.frame})`;
+  }
+
+  // Draw 5x OLED
+  clearOledCanvas(c1.oledCtx);
+  const cx = 64 + Math.round(c1.x);
+  const cy = 32;
+  const w = 32, h = 40, r = 10;
+  c1.oledCtx.fillStyle = '#00d4ff';
+  c1.oledCtx.beginPath();
+  c1.oledCtx.roundRect(cx - 28 - Math.floor(w/2), cy - Math.floor(h/2), w, h, r);
+  c1.oledCtx.roundRect(cx + 28 - Math.floor(w/2), cy - Math.floor(h/2), w, h, r);
+  c1.oledCtx.fill();
+
+  // Draw Graph
+  const gCtx = c1.graphCtx;
+  const gw = c1.graph.width, gh = c1.graph.height;
+  gCtx.fillStyle = '#04070d';
+  gCtx.fillRect(0, 0, gw, gh);
+
+  const midY = gh / 2;
+  const scaleY = (midY - 20) / 25;
+
+  const topLimit = midY - c1.range * scaleY;
+  const botLimit = midY + c1.range * scaleY;
+  gCtx.strokeStyle = '#30363d';
+  gCtx.setLineDash([4, 4]);
+  gCtx.strokeRect(40, topLimit, gw - 60, botLimit - topLimit);
+  gCtx.setLineDash([]);
+
+  gCtx.strokeStyle = '#f85149';
+  gCtx.lineWidth = 2.5;
+  gCtx.beginPath();
+  c1.history.forEach((pt, i) => {
+    const px = 40 + (i / c1.maxHistory) * (gw - 60);
+    const py = midY - pt.x * scaleY;
+    if (i === 0) gCtx.moveTo(px, py);
+    else gCtx.lineTo(px, py);
+  });
+  gCtx.stroke();
+
+  gCtx.strokeStyle = '#d29922';
+  gCtx.lineWidth = 1.8;
+  gCtx.beginPath();
+  c1.history.forEach((pt, i) => {
+    const px = 40 + (i / c1.maxHistory) * (gw - 60);
+    const py = midY - (pt.vel * 8) * scaleY;
+    if (i === 0) gCtx.moveTo(px, py);
+    else gCtx.lineTo(px, py);
+  });
+  gCtx.stroke();
+
+  // Dynamic C++ Evaluation Line
+  c1.dynLine.innerHTML = `
+    eyeX = <span class="dyn-cur">${prevX.toFixed(2)}</span> + (<span class="dyn-alpha">${c1.vel > 0 ? '+' : ''}${c1.vel.toFixed(2)}</span>) = <span class="dyn-res">${c1.x.toFixed(2)} px</span> (limit = ±${c1.range} px)
+  `;
+
+  // Table
+  c1.tbody.innerHTML = c1.tableHistory.map((row, idx) => `
+    <tr class="${idx === 0 ? 'current-step' : 'prev-step'}">
+      <td><b>#${row.frame}</b></td>
+      <td>${row.curX.toFixed(2)} px</td>
+      <td>${row.step > 0 ? '+' : ''}${row.step.toFixed(2)} px</td>
+      <td><b>${row.newX.toFixed(2)} px</b></td>
+      <td>${row.reversed ? '⚡ Hard Reversal' : (row.step > 0 ? '→ Right' : '← Left')}</td>
+    </tr>
+  `).join('');
+}
+
+c1.playBtn = { click: () => { c1.running = !c1.running; } };
+c1.stepBtn = { click: () => { c1.running = false; c1Step(33); } };
+c1.resetBtn = { click: () => { c1.running = false; c1.timeMs = 0; c1.frame = 0; c1.x = 0; c1.vel = parseFloat(c1.speedSlider.value); c1.history = []; c1.tableHistory = []; c1Render(); } };
+
+c1.speedSlider.addEventListener('input', (e) => {
+  document.getElementById('c1_speed_val').textContent = `${parseFloat(e.target.value).toFixed(1)} px/f`;
+});
+c1.rangeSlider.addEventListener('input', (e) => {
+  document.getElementById('c1_range_val').textContent = `±${e.target.value} px`;
+});
+
+// =========================================================================
+//  CONCEPT 2: SMOOTH LERP EYE (Lesson 6)
+// =========================================================================
+const c2 = {
+  running: false,
+  timeMs: 0,
+  frame: 0,
+  current: 0,
+  target: 18,
+  alpha: 0.30,
+  pauseTicks: 0,
+  history: [],
+  tableHistory: [],
+  maxHistory: 100,
+  oled: document.getElementById('c2_oled'),
+  graph: document.getElementById('c2_graph'),
+  oledCtx: document.getElementById('c2_oled').getContext('2d'),
+  graphCtx: document.getElementById('c2_graph').getContext('2d'),
+  alphaSlider: document.getElementById('c2_alpha'),
+  tgtSlider: document.getElementById('c2_tgt'),
+  pingpongBox: document.getElementById('c2_pingpong'),
+  dynLine: document.getElementById('c2_dyn_line'),
+  tbody: document.getElementById('c2_table_body'),
+  narrative: document.getElementById('c2_narrative')
+};
+
+function c2Step(dt = 33) {
+  c2.timeMs += dt;
+  c2.frame++;
+  c2.alpha = parseFloat(c2.alphaSlider.value);
+
+  if (c2.pauseTicks > 0) {
+    c2.pauseTicks--;
+    if (c2.pauseTicks === 0) {
+      c2.target = -c2.target;
+      c2.tgtSlider.value = Math.round(c2.target);
+      document.getElementById('c2_tgt_val').textContent = (c2.target > 0 ? '+' : '') + Math.round(c2.target) + ' px';
+    }
+  }
+
+  const prevX = c2.current;
+  const dist = c2.target - c2.current;
+  const step = dist * c2.alpha;
+  c2.current += step;
+
+  let justArrived = false;
+  if (Math.abs(dist) < 0.25 && c2.pingpongBox.checked && c2.pauseTicks === 0) {
+    c2.pauseTicks = 12;
+    justArrived = true;
+  }
+
+  c2.history.push({ time: c2.timeMs, current: c2.current, target: c2.target, dist: dist, step: step });
+  if (c2.history.length > c2.maxHistory) c2.history.shift();
+
+  c2.tableHistory.unshift({
+    frame: c2.frame,
+    curX: prevX,
+    dist: dist,
+    step: step,
+    newX: c2.current,
+    arrived: justArrived
+  });
+  if (c2.tableHistory.length > 5) c2.tableHistory.pop();
+
+  c2Render(prevX, dist, step);
+}
+
+function c2Render(prevX=0, dist=0, step=0) {
+  if (currentActiveConceptId === 'tab-lerp') {
+    document.getElementById('sb_timer_val').textContent = `${c2.timeMs} ms (Frame #${c2.frame})`;
+  }
+
+  // Draw 5x OLED
+  clearOledCanvas(c2.oledCtx);
+  const cx = 64 + Math.round(c2.current);
+  const cy = 32;
+  const w = 32, h = 40, r = 10;
+  c2.oledCtx.fillStyle = '#00d4ff';
+
+  const tgtCx = 64 + Math.round(c2.target);
+  c2.oledCtx.strokeStyle = 'rgba(210, 153, 34, 0.5)';
+  c2.oledCtx.setLineDash([3, 3]);
+  c2.oledCtx.strokeRect(tgtCx - 28 - Math.floor(w/2), cy - Math.floor(h/2), w, h);
+  c2.oledCtx.strokeRect(tgtCx + 28 - Math.floor(w/2), cy - Math.floor(h/2), w, h);
+  c2.oledCtx.setLineDash([]);
+
+  c2.oledCtx.beginPath();
+  c2.oledCtx.roundRect(cx - 28 - Math.floor(w/2), cy - Math.floor(h/2), w, h, r);
+  c2.oledCtx.roundRect(cx + 28 - Math.floor(w/2), cy - Math.floor(h/2), w, h, r);
+  c2.oledCtx.fill();
+
+  // Draw Graph
+  const gCtx = c2.graphCtx;
+  const gw = c2.graph.width, gh = c2.graph.height;
+  gCtx.fillStyle = '#04070d';
+  gCtx.fillRect(0, 0, gw, gh);
+
+  const midY = gh / 2;
+  const scaleY = (midY - 20) / 25;
+
+  const targetY = midY - c2.target * scaleY;
+  gCtx.strokeStyle = '#d29922';
+  gCtx.setLineDash([4, 4]);
+  gCtx.beginPath();
+  gCtx.moveTo(40, targetY); gCtx.lineTo(gw - 20, targetY);
+  gCtx.stroke();
+  gCtx.setLineDash([]);
+
+  gCtx.strokeStyle = '#3fb950';
+  gCtx.lineWidth = 3;
+  gCtx.beginPath();
+  c2.history.forEach((pt, i) => {
+    const px = 40 + (i / c2.maxHistory) * (gw - 60);
+    const py = midY - pt.current * scaleY;
+    if (i === 0) gCtx.moveTo(px, py);
+    else gCtx.lineTo(px, py);
+  });
+  gCtx.stroke();
+
+  gCtx.strokeStyle = '#58a6ff';
+  gCtx.lineWidth = 1.8;
+  gCtx.beginPath();
+  c2.history.forEach((pt, i) => {
+    const px = 40 + (i / c2.maxHistory) * (gw - 60);
+    const py = midY - pt.dist * scaleY;
+    if (i === 0) gCtx.moveTo(px, py);
+    else gCtx.lineTo(px, py);
+  });
+  gCtx.stroke();
+
+  // Dynamic C++ Evaluation Line
+  c2.dynLine.innerHTML = `
+    current = <span class="dyn-cur">${prevX.toFixed(2)}</span> + (<span class="dyn-tgt">${c2.target > 0 ? '+' : ''}${c2.target.toFixed(1)}</span> - <span class="dyn-cur">${prevX.toFixed(2)}</span>) * <span class="dyn-alpha">${c2.alpha.toFixed(2)}</span> = <span class="dyn-res">${c2.current.toFixed(2)} px</span>
+  `;
+
+  // Table
+  const pct = Math.round(c2.alpha * 100);
+  c2.tbody.innerHTML = c2.tableHistory.map((row, idx) => `
+    <tr class="${idx === 0 ? 'current-step' : 'prev-step'}">
+      <td><b>#${row.frame}</b></td>
+      <td>${row.curX.toFixed(2)} px</td>
+      <td>${row.dist.toFixed(2)} px</td>
+      <td>${row.step > 0 ? '+' : ''}${row.step.toFixed(2)} px (${pct}%)</td>
+      <td><b>${row.newX.toFixed(2)} px</b></td>
+    </tr>
+  `).join('');
+}
+
+c2.playBtn = { click: () => { c2.running = !c2.running; } };
+c2.stepBtn = { click: () => { c2.running = false; c2Step(33); } };
+c2.resetBtn = { click: () => { c2.running = false; c2.timeMs = 0; c2.frame = 0; c2.current = 0; c2.target = 18; c2.tgtSlider.value = 18; document.getElementById('c2_tgt_val').textContent = '+18 px'; c2.history = []; c2.tableHistory = []; c2Render(); } };
+
+c2.alphaSlider.addEventListener('input', (e) => {
+  document.getElementById('c2_alpha_val').textContent = parseFloat(e.target.value).toFixed(2);
+});
+c2.tgtSlider.addEventListener('input', (e) => {
+  c2.target = parseFloat(e.target.value);
+  document.getElementById('c2_tgt_val').textContent = (c2.target > 0 ? '+' : '') + c2.target.toFixed(0) + ' px';
+  if (!c2.running) c2Render();
+});
+
+// =========================================================================
+//  CONCEPT 3: BLINKING EYE (Lesson 7)
+// =========================================================================
+const c3 = {
+  running: false,
+  timeScale: 1.0,
+  timeMs: 0,
+  frame: 0,
+  openness: 1.0,
+  tgtOpen: 1.0,
+  blinking: false,
+  blinkEnd: 0,
+  nextBlink: 2000,
+  blinkInterval: 2000,
+  history: [],
+  tableHistory: [],
+  maxHistory: 100,
+  oled: document.getElementById('c3_oled'),
+  graph: document.getElementById('c3_graph'),
+  oledCtx: document.getElementById('c3_oled').getContext('2d'),
+  graphCtx: document.getElementById('c3_graph').getContext('2d'),
+  manualScrubber: document.getElementById('c3_manual_open'),
+  countdownBar: document.getElementById('c3_countdown_bar'),
+  countdownText: document.getElementById('c3_countdown_text'),
+  dynLine: document.getElementById('c3_dyn_line'),
+  tbody: document.getElementById('c3_table_body'),
+  narrative: document.getElementById('c3_narrative')
+};
+
+function c3Step(dt = 33) {
+  const effectiveDt = dt * c3.timeScale;
+  c3.timeMs += effectiveDt;
+  c3.frame++;
+
+  if (!c3.blinking && c3.timeMs >= c3.nextBlink) {
+    c3.blinking = true;
+    c3.blinkEnd = c3.timeMs + 130;
+  }
+  if (c3.blinking && c3.timeMs >= c3.blinkEnd) {
+    c3.blinking = false;
+    c3.nextBlink = c3.timeMs + c3.blinkInterval;
+  }
+  c3.tgtOpen = c3.blinking ? 0.0 : 1.0;
+
+  c3.openness += (c3.tgtOpen - c3.openness) * 0.5;
+  c3.manualScrubber.value = c3.openness.toFixed(2);
+  document.getElementById('c3_manual_open_val').textContent = c3.openness.toFixed(2);
+
+  const curH = Math.max(3, Math.round(40 * c3.openness));
+  c3.history.push({ time: c3.timeMs, open: c3.openness, height: curH });
+  if (c3.history.length > c3.maxHistory) c3.history.shift();
+
+  c3.tableHistory.unshift({
+    frame: c3.frame,
+    state: c3.blinking ? (c3.openness < 0.2 ? 'FULLY CLOSED' : 'CLOSING') : (c3.openness > 0.95 ? 'OPEN' : 'OPENING'),
+    tgtOpen: c3.tgtOpen,
+    openness: c3.openness,
+    curH: curH
+  });
+  if (c3.tableHistory.length > 5) c3.tableHistory.pop();
+
+  c3Render(curH);
+}
+
+function c3Render(curH=40) {
+  const timeUntil = Math.max(0, (c3.nextBlink - c3.timeMs) / 1000);
+  c3.countdownText.textContent = `${timeUntil.toFixed(1)}s`;
+  const pct = Math.max(0, Math.min(100, (timeUntil / (c3.blinkInterval / 1000)) * 100));
+  c3.countdownBar.style.width = `${pct}%`;
+
+  if (currentActiveConceptId === 'tab-blink') {
+    document.getElementById('sb_timer_val').textContent = c3.blinking ? `BLINK! (h=${curH}px)` : `Waiting (${timeUntil.toFixed(1)}s)`;
+  }
+  document.getElementById('c3_screen_status').textContent = c3.blinking ? `Blinking: Height = ${curH}px` : 'Eyes Fully Open (40px)';
+
+  // Draw 5x OLED
+  clearOledCanvas(c3.oledCtx);
+  const cx1 = 36, cx2 = 92, cy = 32;
+  const w = 32, r = Math.min(10, Math.floor(curH / 2));
+  const top = cy - Math.floor(curH / 2);
+
+  c3.oledCtx.fillStyle = '#00d4ff';
+  c3.oledCtx.beginPath();
+  c3.oledCtx.roundRect(cx1 - Math.floor(w/2), top, w, curH, r);
+  c3.oledCtx.roundRect(cx2 - Math.floor(w/2), top, w, curH, r);
+  c3.oledCtx.fill();
+
+  // Draw Graph
+  const gCtx = c3.graphCtx;
+  const gw = c3.graph.width, gh = c3.graph.height;
+  gCtx.fillStyle = '#04070d';
+  gCtx.fillRect(0, 0, gw, gh);
+
+  gCtx.strokeStyle = '#00d4ff';
+  gCtx.lineWidth = 2.5;
+  gCtx.beginPath();
+  c3.history.forEach((pt, i) => {
+    const px = 40 + (i / c3.maxHistory) * (gw - 60);
+    const py = (gh - 40) - pt.open * (gh - 80);
+    if (i === 0) gCtx.moveTo(px, py);
+    else gCtx.lineTo(px, py);
+  });
+  gCtx.stroke();
+
+  gCtx.strokeStyle = '#f85149';
+  gCtx.lineWidth = 1.8;
+  gCtx.beginPath();
+  c3.history.forEach((pt, i) => {
+    const px = 40 + (i / c3.maxHistory) * (gw - 60);
+    const py = (gh - 40) - (pt.height / 40) * (gh - 80);
+    if (i === 0) gCtx.moveTo(px, py);
+    else gCtx.lineTo(px, py);
+  });
+  gCtx.stroke();
+
+  // Dynamic C++ Evaluation Line
+  c3.dynLine.innerHTML = `
+    h = max(3, (int)(40 * <span class="dyn-cur">${c3.openness.toFixed(2)}</span>)) = <span class="dyn-res">${curH} px</span> | top = 32 - ${Math.floor(curH/2)} = ${top} px (y = [${top}..${top+curH}])
+  `;
+
+  // Table
+  c3.tbody.innerHTML = c3.tableHistory.map((row, idx) => `
+    <tr class="${idx === 0 ? 'current-step' : 'prev-step'}">
+      <td><b>${row.state}</b></td>
+      <td>${row.tgtOpen.toFixed(1)}</td>
+      <td>${row.openness.toFixed(2)}</td>
+      <td><b>${row.curH} px</b></td>
+      <td>[${32 - Math.floor(row.curH/2)} .. ${32 + Math.ceil(row.curH/2)}]</td>
+    </tr>
+  `).join('');
+}
+
+c3.playBtn = { click: () => { c3.running = !c3.running; } };
+c3.stepBtn = { click: () => { c3.running = false; c3Step(33); } };
+c3.resetBtn = { click: () => { c3.running = false; c3.timeMs = 0; c3.frame = 0; c3.openness = 1.0; c3.blinking = false; c3.nextBlink = 2000; c3.history = []; c3.tableHistory = []; c3Render(); } };
+
+document.getElementById('c3_btn_trigger').addEventListener('click', () => {
+  c3.blinking = true;
+  c3.blinkEnd = c3.timeMs + 130;
+});
+c3.manualScrubber.addEventListener('input', (e) => {
+  c3.running = false;
+  c3.openness = parseFloat(e.target.value);
+  document.getElementById('c3_manual_open_val').textContent = c3.openness.toFixed(2);
+  const curH = Math.max(3, Math.round(40 * c3.openness));
+  c3Render(curH);
+  syncSidebarControls();
+});
+document.getElementById('c3_speed_1x').addEventListener('click', function() { c3.timeScale = 1.0; setActiveSpeedBtn(this); });
+document.getElementById('c3_speed_half').addEventListener('click', function() { c3.timeScale = 0.5; setActiveSpeedBtn(this); });
+document.getElementById('c3_speed_slow').addEventListener('click', function() { c3.timeScale = 0.2; setActiveSpeedBtn(this); });
+function setActiveSpeedBtn(btn) {
+  [document.getElementById('c3_speed_1x'), document.getElementById('c3_speed_half'), document.getElementById('c3_speed_slow')].forEach(b => b.classList.remove('btn-play'));
+  btn.classList.add('btn-play');
+}
+
+// =========================================================================
+//  CONCEPT 4: BOUNCING SINE WAVE (Lesson 9)
+// =========================================================================
+const c4 = {
+  running: false,
+  timeMs: 0,
+  frame: 0,
+  amp: 4,
+  omega: 0.012,
+  history: [],
+  tableHistory: [],
+  maxHistory: 100,
+  oled: document.getElementById('c4_oled'),
+  graph: document.getElementById('c4_graph'),
+  oledCtx: document.getElementById('c4_oled').getContext('2d'),
+  graphCtx: document.getElementById('c4_graph').getContext('2d'),
+  ampSlider: document.getElementById('c4_amp'),
+  omegaSlider: document.getElementById('c4_omega'),
+  dynLine: document.getElementById('c4_dyn_line'),
+  tbody: document.getElementById('c4_table_body'),
+  narrative: document.getElementById('c4_narrative')
+};
+
+function c4Step(dt = 33) {
+  c4.timeMs += dt;
+  c4.frame++;
+  c4.amp = parseFloat(c4.ampSlider.value);
+  c4.omega = parseFloat(c4.omegaSlider.value);
+
+  const theta = (c4.timeMs * c4.omega) % (Math.PI * 2);
+  const sinVal = Math.sin(theta);
+  const dy = Math.round(sinVal * c4.amp);
+  const cy = 32 + dy;
+
+  c4.history.push({ time: c4.timeMs, theta: theta, sin: sinVal, dy: dy, cy: cy });
+  if (c4.history.length > c4.maxHistory) c4.history.shift();
+
+  c4.tableHistory.unshift({ time: c4.timeMs, theta: theta, sin: sinVal, dy: dy, cy: cy });
+  if (c4.tableHistory.length > 5) c4.tableHistory.pop();
+
+  c4Render(theta, sinVal, dy, cy);
+}
+
+function c4Render(theta=0, sinVal=0, dy=0, cy=32) {
+  if (currentActiveConceptId === 'tab-sine') {
+    document.getElementById('sb_timer_val').textContent = `${c4.timeMs} ms (θ = ${theta.toFixed(2)} rad)`;
+  }
+
+  // 5x OLED
+  clearOledCanvas(c4.oledCtx);
+  const eyeX = [36, 92];
+  c4.oledCtx.strokeStyle = '#00d4ff';
+  c4.oledCtx.lineWidth = 1;
+
+  for (let e = 0; e < 2; e++) {
+    for (let i = 0; i < 4; i++) {
+      c4.oledCtx.beginPath();
+      c4.oledCtx.arc(eyeX[e], cy + 8, 13 + i, 0, Math.PI * 2);
+      c4.oledCtx.stroke();
+    }
+    c4.oledCtx.fillStyle = '#010408';
+    c4.oledCtx.fillRect(eyeX[e] - 20, cy + 8, 41, 30);
+  }
+
+  // Graph
+  const gCtx = c4.graphCtx;
+  const gw = c4.graph.width, gh = c4.graph.height;
+  gCtx.fillStyle = '#04070d';
+  gCtx.fillRect(0, 0, gw, gh);
+
+  const midY = gh / 2;
+  const unitR = 50, uCx = 70, uCy = midY;
+
+  gCtx.strokeStyle = '#223044';
+  gCtx.lineWidth = 1.5;
+  gCtx.beginPath();
+  gCtx.arc(uCx, uCy, unitR, 0, Math.PI * 2);
+  gCtx.stroke();
+
+  const px = uCx + Math.cos(theta) * unitR;
+  const py = uCy - Math.sin(theta) * unitR;
+  gCtx.strokeStyle = '#ff7b72';
+  gCtx.lineWidth = 2;
+  gCtx.beginPath();
+  gCtx.moveTo(uCx, uCy); gCtx.lineTo(px, py);
+  gCtx.stroke();
+  gCtx.fillStyle = '#ff7b72';
+  gCtx.beginPath();
+  gCtx.arc(px, py, 4, 0, Math.PI * 2);
+  gCtx.fill();
+
+  gCtx.strokeStyle = 'rgba(255, 123, 114, 0.4)';
+  gCtx.setLineDash([3, 3]);
+  gCtx.beginPath();
+  gCtx.moveTo(px, py); gCtx.lineTo(gw - 20, py);
+  gCtx.stroke();
+  gCtx.setLineDash([]);
+
+  gCtx.strokeStyle = '#39c5cf';
+  gCtx.lineWidth = 2.5;
+  gCtx.beginPath();
+  const startX = 150;
+  for (let x = startX; x < gw - 20; x++) {
+    const t = c4.timeMs - (x - startX) * 12;
+    const waveY = midY - Math.sin(t * c4.omega) * (c4.amp * 8);
+    if (x === startX) gCtx.moveTo(x, waveY);
+    else gCtx.lineTo(x, waveY);
+  }
+  gCtx.stroke();
+
+  // Dynamic C++ Evaluation Line
+  c4.dynLine.innerHTML = `
+    cy = 32 + (int)(sin(<span class="dyn-cur">${theta.toFixed(2)} rad</span>) * ${c4.amp}) = 32 + (int)(<span class="dyn-alpha">${sinVal.toFixed(3)}</span> * ${c4.amp}) = <span class="dyn-res">${cy} px</span>
+  `;
+
+  // Table
+  c4.tbody.innerHTML = c4.tableHistory.map((row, idx) => `
+    <tr class="${idx === 0 ? 'current-step' : 'prev-step'}">
+      <td>${row.time} ms</td>
+      <td>${row.theta.toFixed(2)} rad</td>
+      <td>${row.sin.toFixed(3)}</td>
+      <td><b>${row.dy > 0 ? '+' : ''}${row.dy} px</b></td>
+      <td><b>cy = ${row.cy} px</b></td>
+    </tr>
+  `).join('');
+}
+
+c4.playBtn = { click: () => { c4.running = !c4.running; } };
+c4.stepBtn = { click: () => { c4.running = false; c4Step(33); } };
+c4.resetBtn = { click: () => { c4.running = false; c4.timeMs = 0; c4.frame = 0; c4.history = []; c4.tableHistory = []; c4Render(); } };
+
+c4.ampSlider.addEventListener('input', (e) => { document.getElementById('c4_amp_val').textContent = `${e.target.value} px`; });
+c4.omegaSlider.addEventListener('input', (e) => {
+  const w = parseFloat(e.target.value);
+  document.getElementById('c4_omega_val').textContent = `${w.toFixed(3)} rad/ms`;
+});
+
+// =========================================================================
+//  CONCEPT 5: RANDOM LOOKING (Lesson 8)
+// =========================================================================
+const c5 = {
+  running: false,
+  timeMs: 0,
+  frame: 0,
+  curX: 0, curY: 0,
+  tgtX: 0, tgtY: 0,
+  nextLook: 1500,
+  history: [],
+  tableHistory: [],
+  maxHistory: 80,
+  oled: document.getElementById('c5_oled'),
+  graph: document.getElementById('c5_graph'),
+  oledCtx: document.getElementById('c5_oled').getContext('2d'),
+  graphCtx: document.getElementById('c5_graph').getContext('2d'),
+  rxSlider: document.getElementById('c5_rx'),
+  rySlider: document.getElementById('c5_ry'),
+  dynLine: document.getElementById('c5_dyn_line'),
+  tbody: document.getElementById('c5_table_body'),
+  narrative: document.getElementById('c5_narrative')
+};
+
+function c5Step(dt = 33) {
+  c5.timeMs += dt;
+  c5.frame++;
+
+  const rx = parseInt(c5.rxSlider.value);
+  const ry = parseInt(c5.rySlider.value);
+
+  if (c5.timeMs >= c5.nextLook) {
+    if (Math.random() < 0.33) {
+      c5.tgtX = 0; c5.tgtY = 0;
+    } else {
+      c5.tgtX = Math.floor(Math.random() * (rx * 2 + 1)) - rx;
+      c5.tgtY = Math.floor(Math.random() * (ry * 2 + 1)) - ry;
+    }
+    c5.nextLook = c5.timeMs + 1200 + Math.random() * 1500;
+  }
+
+  c5.curX += (c5.tgtX - c5.curX) * 0.3;
+  c5.curY += (c5.tgtY - c5.curY) * 0.3;
+
+  c5.history.push({ x: c5.curX, y: c5.curY, tgtX: c5.tgtX, tgtY: c5.tgtY });
+  if (c5.history.length > c5.maxHistory) c5.history.shift();
+
+  const dist = Math.hypot(c5.tgtX - c5.curX, c5.tgtY - c5.curY);
+  c5.tableHistory.unshift({ time: c5.timeMs, curX: c5.curX, curY: c5.curY, tgtX: c5.tgtX, tgtY: c5.tgtY, dist: dist });
+  if (c5.tableHistory.length > 5) c5.tableHistory.pop();
+
+  c5Render(dist);
+}
+
+function c5Render(dist=0) {
+  const timeLeft = Math.max(0, (c5.nextLook - c5.timeMs) / 1000).toFixed(1);
+  if (currentActiveConceptId === 'tab-saccade') {
+    document.getElementById('sb_timer_val').textContent = `${c5.timeMs} ms (Next: ${timeLeft}s)`;
+  }
+
+  // 5x OLED
+  clearOledCanvas(c5.oledCtx);
+  const cx1 = 36 + Math.round(c5.curX);
+  const cx2 = 92 + Math.round(c5.curX);
+  const cy = 32 + Math.round(c5.curY);
+  const w = 32, h = 40, r = 10;
+
+  c5.oledCtx.fillStyle = '#00d4ff';
+  c5.oledCtx.beginPath();
+  c5.oledCtx.roundRect(cx1 - Math.floor(w/2), cy - Math.floor(h/2), w, h, r);
+  c5.oledCtx.roundRect(cx2 - Math.floor(w/2), cy - Math.floor(h/2), w, h, r);
+  c5.oledCtx.fill();
+
+  // Graph
+  const gCtx = c5.graphCtx;
+  const gw = c5.graph.width, gh = c5.graph.height;
+  gCtx.fillStyle = '#04070d';
+  gCtx.fillRect(0, 0, gw, gh);
+
+  const midX = gw / 2, midY = gh / 2;
+  const scale = 10.0;
+
+  gCtx.strokeStyle = '#162233';
+  gCtx.lineWidth = 1;
+  gCtx.strokeRect(midX - 18 * scale, midY - 10 * scale, 36 * scale, 20 * scale);
+  gCtx.beginPath();
+  gCtx.moveTo(midX, midY - 10 * scale); gCtx.lineTo(midX, midY + 10 * scale);
+  gCtx.moveTo(midX - 18 * scale, midY); gCtx.lineTo(midX + 18 * scale, midY);
+  gCtx.stroke();
+
+  gCtx.strokeStyle = '#00d4ff';
+  gCtx.lineWidth = 2.5;
+  gCtx.beginPath();
+  c5.history.forEach((pt, i) => {
+    const px = midX + pt.x * scale;
+    const py = midY + pt.y * scale;
+    if (i === 0) gCtx.moveTo(px, py);
+    else gCtx.lineTo(px, py);
+  });
+  gCtx.stroke();
+
+  gCtx.fillStyle = '#d29922';
+  gCtx.beginPath();
+  gCtx.arc(midX + c5.tgtX * scale, midY + c5.tgtY * scale, 6, 0, Math.PI * 2);
+  gCtx.fill();
+
+  // Dynamic C++ Evaluation Line
+  c5.dynLine.innerHTML = `
+    curX = <span class="dyn-cur">${c5.curX.toFixed(1)}</span> \\to tgtX = <span class="dyn-tgt">${c5.tgtX}</span> | curY = <span class="dyn-cur">${c5.curY.toFixed(1)}</span> \\to tgtY = <span class="dyn-tgt">${c5.tgtY}</span> | dist = <span class="dyn-res">${dist.toFixed(1)} px</span>
+  `;
+
+  // Table
+  c5.tbody.innerHTML = c5.tableHistory.map((row, idx) => `
+    <tr class="${idx === 0 ? 'current-step' : 'prev-step'}">
+      <td>${row.time} ms</td>
+      <td>(${row.curX.toFixed(1)}, ${row.curY.toFixed(1)})</td>
+      <td>(${row.tgtX}, ${row.tgtY})</td>
+      <td><b>${row.dist.toFixed(1)} px</b></td>
+      <td>${row.dist < 0.5 ? 'Resting' : 'Gliding'}</td>
+    </tr>
+  `).join('');
+}
+
+c5.playBtn = { click: () => { c5.running = !c5.running; } };
+c5.stepBtn = { click: () => { c5.running = false; c5Step(33); } };
+c5.resetBtn = { click: () => { c5.running = false; c5.timeMs = 0; c5.frame = 0; c5.curX = 0; c5.curY = 0; c5.tgtX = 0; c5.tgtY = 0; c5.history = []; c5.tableHistory = []; c5Render(); } };
+
+document.getElementById('c5_btn_newtgt').addEventListener('click', () => {
+  const rx = parseInt(c5.rxSlider.value);
+  const ry = parseInt(c5.rySlider.value);
+  c5.tgtX = Math.floor(Math.random() * (rx * 2 + 1)) - rx;
+  c5.tgtY = Math.floor(Math.random() * (ry * 2 + 1)) - ry;
+  c5.nextLook = c5.timeMs + 2000;
+  c5Render();
+});
+c5.rxSlider.addEventListener('input', (e) => { document.getElementById('c5_rx_val').textContent = `±${e.target.value} px`; });
+c5.rySlider.addEventListener('input', (e) => { document.getElementById('c5_ry_val').textContent = `±${e.target.value} px`; });
+
+// =========================================================================
+//  CONCEPT 6: THE MASK TRICK (Lesson 10)
+// =========================================================================
+const c6 = {
+  mode: 'ANGRY',
+  drop: 0.40,
+  oled: document.getElementById('c6_oled'),
+  graph: document.getElementById('c6_graph'),
+  oledCtx: document.getElementById('c6_oled').getContext('2d'),
+  graphCtx: document.getElementById('c6_graph').getContext('2d'),
+  angryBtn: document.getElementById('c6_btn_angry'),
+  sadBtn: document.getElementById('c6_btn_sad'),
+  dropSlider: document.getElementById('c6_drop'),
+  dynLine: document.getElementById('c6_dyn_line'),
+  tbody: document.getElementById('c6_table_body'),
+  narrative: document.getElementById('c6_narrative')
+};
+
+function c6Render() {
+  c6.drop = parseFloat(c6.dropSlider.value);
+  if (currentActiveConceptId === 'tab-mask') {
+    document.getElementById('sb_timer_val').textContent = `Mode: ${c6.mode} Eyelids`;
+  }
+
+  // 5x OLED
+  clearOledCanvas(c6.oledCtx);
+  const lx = 36, rx = 92;
+  const cy = 32, w = 32, h = 40, r = 10;
+  const top = cy - Math.floor(h / 2);
+  const dropPx = Math.floor(h * c6.drop);
+
+  c6.oledCtx.fillStyle = '#00d4ff';
+  c6.oledCtx.beginPath();
+  c6.oledCtx.roundRect(lx - Math.floor(w/2), top, w, h, r);
+  c6.oledCtx.roundRect(rx - Math.floor(w/2), top, w, h, r);
+  c6.oledCtx.fill();
+
+  c6.oledCtx.fillStyle = '#010408';
+  const lL = lx - Math.floor(w/2), lR = lx + Math.floor(w/2);
+  const rL = rx - Math.floor(w/2), rR = rx + Math.floor(w/2);
+
+  if (c6.mode === 'ANGRY') {
+    c6.oledCtx.beginPath();
+    c6.oledCtx.moveTo(lL - 1, top - 1); c6.oledCtx.lineTo(lR + 1, top - 1); c6.oledCtx.lineTo(lR + 1, top + dropPx);
+    c6.oledCtx.closePath(); c6.oledCtx.fill();
+
+    c6.oledCtx.beginPath();
+    c6.oledCtx.moveTo(rL - 1, top - 1); c6.oledCtx.lineTo(rR + 1, top - 1); c6.oledCtx.lineTo(rL - 1, top + dropPx);
+    c6.oledCtx.closePath(); c6.oledCtx.fill();
+  } else {
+    c6.oledCtx.beginPath();
+    c6.oledCtx.moveTo(lL - 1, top - 1); c6.oledCtx.lineTo(lR + 1, top - 1); c6.oledCtx.lineTo(lL - 1, top + dropPx);
+    c6.oledCtx.closePath(); c6.oledCtx.fill();
+
+    c6.oledCtx.beginPath();
+    c6.oledCtx.moveTo(rL - 1, top - 1); c6.oledCtx.lineTo(rR + 1, top - 1); c6.oledCtx.lineTo(rR + 1, top + dropPx);
+    c6.oledCtx.closePath(); c6.oledCtx.fill();
+  }
+
+  // 3-Layer CSG Diagram
+  const gCtx = c6.graphCtx;
+  const gw = c6.graph.width, gh = c6.graph.height;
+  gCtx.fillStyle = '#04070d';
+  gCtx.fillRect(0, 0, gw, gh);
+
+  const scale = 2.8;
+  const ex = 120, ey = gh / 2;
+
+  gCtx.fillStyle = '#00d4ff';
+  gCtx.beginPath();
+  gCtx.roundRect(ex - (w/2)*scale, ey - (h/2)*scale, w*scale, h*scale, r*scale);
+  gCtx.fill();
+  gCtx.fillStyle = '#8b949e';
+  gCtx.font = '12px monospace';
+  gCtx.fillText('1. Base White Eye', ex - 50, ey + (h/2)*scale + 24);
+
+  const mx = 300, my = ey;
+  gCtx.fillStyle = '#1c2738';
+  gCtx.fillRect(mx - (w/2)*scale, my - (h/2)*scale, w*scale, h*scale);
+  gCtx.fillStyle = '#f85149';
+  gCtx.beginPath();
+  if (c6.mode === 'ANGRY') {
+    gCtx.moveTo(mx - (w/2)*scale, my - (h/2)*scale);
+    gCtx.lineTo(mx + (w/2)*scale, my - (h/2)*scale);
+    gCtx.lineTo(mx + (w/2)*scale, my - (h/2)*scale + dropPx*scale);
+  } else {
+    gCtx.moveTo(mx - (w/2)*scale, my - (h/2)*scale);
+    gCtx.lineTo(mx + (w/2)*scale, my - (h/2)*scale);
+    gCtx.lineTo(mx - (w/2)*scale, my - (h/2)*scale + dropPx*scale);
+  }
+  gCtx.closePath();
+  gCtx.fill();
+  gCtx.fillStyle = '#f85149';
+  gCtx.fillText('2. Black Cutting Mask', mx - 60, my + (h/2)*scale + 24);
+
+  const cx3 = 480, cy3 = ey;
+  gCtx.fillStyle = '#00d4ff';
+  gCtx.beginPath();
+  gCtx.roundRect(cx3 - (w/2)*scale, cy3 - (h/2)*scale, w*scale, h*scale, r*scale);
+  gCtx.fill();
+  gCtx.fillStyle = '#04070d';
+  gCtx.beginPath();
+  if (c6.mode === 'ANGRY') {
+    gCtx.moveTo(cx3 - (w/2)*scale, cy3 - (h/2)*scale);
+    gCtx.lineTo(cx3 + (w/2)*scale, cy3 - (h/2)*scale);
+    gCtx.lineTo(cx3 + (w/2)*scale, cy3 - (h/2)*scale + dropPx*scale);
+  } else {
+    gCtx.moveTo(cx3 - (w/2)*scale, cy3 - (h/2)*scale);
+    gCtx.lineTo(cx3 + (w/2)*scale, cy3 - (h/2)*scale);
+    gCtx.lineTo(cx3 - (w/2)*scale, cy3 - (h/2)*scale + dropPx*scale);
+  }
+  gCtx.closePath();
+  gCtx.fill();
+  gCtx.fillStyle = '#3fb950';
+  gCtx.fillText('3. Final Composite', cx3 - 50, cy3 + (h/2)*scale + 24);
+
+  // Dynamic C++ Evaluation Line
+  c6.dynLine.innerHTML = `
+    top = 32 - 20 = 12 px, drop = 40 * ${c6.drop.toFixed(2)} = <span class="dyn-res">${dropPx} px</span> -> Cut vertex = (${c6.mode === 'ANGRY' ? 'lR+1' : 'lL-1'}, ${top+dropPx} px)
+  `;
+
+  // Table
+  c6.tbody.innerHTML = `
+    <tr class="current-step">
+      <td>Left Eye</td><td>(${lL}, ${top})</td><td>(${lR}, ${top})</td><td>(${c6.mode === 'ANGRY' ? lR : lL}, ${top + dropPx})</td><td>${c6.mode === 'ANGRY' ? 'Top-Inner Corner' : 'Top-Outer Corner'}</td>
+    </tr>
+    <tr class="current-step">
+      <td>Right Eye</td><td>(${rL}, ${top})</td><td>(${rR}, ${top})</td><td>(${c6.mode === 'ANGRY' ? rL : rR}, ${top + dropPx})</td><td>${c6.mode === 'ANGRY' ? 'Top-Inner Corner' : 'Top-Outer Corner'}</td>
+    </tr>
+  `;
+}
+
+c6.playBtn = { click: () => { c6.mode = (c6.mode === 'ANGRY') ? 'SAD' : 'ANGRY'; c6.angryBtn.classList.toggle('btn-play', c6.mode === 'ANGRY'); c6.sadBtn.classList.toggle('btn-play', c6.mode === 'SAD'); c6Render(); } };
+c6.stepBtn = c6.playBtn;
+c6.resetBtn = { click: () => { c6.mode = 'ANGRY'; c6.dropSlider.value = 0.40; document.getElementById('c6_drop_val').textContent = '40%'; c6.angryBtn.classList.add('btn-play'); c6.sadBtn.classList.remove('btn-play'); c6Render(); } };
+
+c6.angryBtn.addEventListener('click', () => { c6.mode = 'ANGRY'; c6.angryBtn.classList.add('btn-play'); c6.sadBtn.classList.remove('btn-play'); c6Render(); });
+c6.sadBtn.addEventListener('click', () => { c6.mode = 'SAD'; c6.sadBtn.classList.add('btn-play'); c6.angryBtn.classList.remove('btn-play'); c6Render(); });
+c6.dropSlider.addEventListener('input', (e) => { document.getElementById('c6_drop_val').textContent = `${Math.round(e.target.value * 100)}%`; c6Render(); });
+
+// =========================================================================
+//  CONCEPT 7: JITTER & EMOTIONAL NOISE (Lesson 10)
+// =========================================================================
+const cJ = {
+  running: true,
+  timeMs: 0,
+  frame: 0,
+  amp: 2,
+  history: [],
+  tableHistory: [],
+  maxHistory: 80,
+  oled: document.getElementById('c_j_oled'),
+  graph: document.getElementById('c_j_graph'),
+  oledCtx: document.getElementById('c_j_oled').getContext('2d'),
+  graphCtx: document.getElementById('c_j_graph').getContext('2d'),
+  ampSlider: document.getElementById('c_j_amp'),
+  dynLine: document.getElementById('c_j_dyn_line'),
+  tbody: document.getElementById('c_j_table_body'),
+  narrative: document.getElementById('c_j_narrative')
+};
+
+function cJStep(dt = 33) {
+  cJ.timeMs += dt;
+  cJ.frame++;
+  cJ.amp = parseInt(cJ.ampSlider.value);
+
+  const noise = (Math.floor(Math.random() * (cJ.amp * 2 + 1)) - cJ.amp);
+  const lx = 36 + noise, rx = 92 + noise;
+
+  cJ.history.push({ time: cJ.timeMs, noise: noise });
+  if (cJ.history.length > cJ.maxHistory) cJ.history.shift();
+
+  cJ.tableHistory.unshift({ frame: cJ.frame, baseX: 36, noise: noise, dispX: lx });
+  if (cJ.tableHistory.length > 5) cJ.tableHistory.pop();
+
+  cJRender(noise, lx, rx);
+}
+
+function cJRender(noise=0, lx=36, rx=92) {
+  if (currentActiveConceptId === 'tab-jitter') {
+    document.getElementById('sb_timer_val').textContent = `Jitter (±${cJ.amp} px) #${cJ.frame}`;
+  }
+
+  // 5x OLED
+  clearOledCanvas(cJ.oledCtx);
+  const cy = 32, w = 32, h = 40, r = 10;
+  const top = cy - Math.floor(h / 2);
+  const dropPx = 16;
+
+  cJ.oledCtx.fillStyle = '#00d4ff';
+  cJ.oledCtx.beginPath();
+  cJ.oledCtx.roundRect(lx - Math.floor(w/2), top, w, h, r);
+  cJ.oledCtx.roundRect(rx - Math.floor(w/2), top, w, h, r);
+  cJ.oledCtx.fill();
+
+  const lL = lx - Math.floor(w/2), lR = lx + Math.floor(w/2);
+  const rL = rx - Math.floor(w/2), rR = rx + Math.floor(w/2);
+  cJ.oledCtx.fillStyle = '#010408';
+  cJ.oledCtx.beginPath();
+  cJ.oledCtx.moveTo(lL - 1, top - 1); cJ.oledCtx.lineTo(lR + 1, top - 1); cJ.oledCtx.lineTo(lR + 1, top + dropPx);
+  cJ.oledCtx.closePath(); cJ.oledCtx.fill();
+  cJ.oledCtx.beginPath();
+  cJ.oledCtx.moveTo(rL - 1, top - 1); cJ.oledCtx.lineTo(rR + 1, top - 1); cJ.oledCtx.lineTo(rL - 1, top + dropPx);
+  cJ.oledCtx.closePath(); cJ.oledCtx.fill();
+
+  // Graph
+  const gCtx = cJ.graphCtx;
+  const gw = cJ.graph.width, gh = cJ.graph.height;
+  gCtx.fillStyle = '#04070d';
+  gCtx.fillRect(0, 0, gw, gh);
+
+  const midY = gh / 2;
+  const scaleY = (midY - 20) / 6;
+
+  gCtx.strokeStyle = '#d29922';
+  gCtx.setLineDash([4, 4]);
+  gCtx.beginPath();
+  gCtx.moveTo(40, midY - cJ.amp * scaleY); gCtx.lineTo(gw - 20, midY - cJ.amp * scaleY);
+  gCtx.moveTo(40, midY + cJ.amp * scaleY); gCtx.lineTo(gw - 20, midY + cJ.amp * scaleY);
+  gCtx.stroke();
+  gCtx.setLineDash([]);
+
+  gCtx.strokeStyle = '#f85149';
+  gCtx.lineWidth = 2.0;
+  gCtx.beginPath();
+  cJ.history.forEach((pt, i) => {
+    const px = 40 + (i / cJ.maxHistory) * (gw - 60);
+    const py = midY - pt.noise * scaleY;
+    if (i === 0) gCtx.moveTo(px, py);
+    else gCtx.lineTo(px, py);
+  });
+  gCtx.stroke();
+
+  // Dynamic C++ Evaluation Line
+  cJ.dynLine.innerHTML = `
+    dx = 0 + (<span class="dyn-alpha">${noise > 0 ? '+' : ''}${noise} px</span>) = <span class="dyn-res">${noise} px</span> (Left Eye: 36 + ${noise} = ${lx} px)
+  `;
+
+  // Table
+  cJ.tbody.innerHTML = cJ.tableHistory.map((row, idx) => `
+    <tr class="${idx === 0 ? 'current-step' : 'prev-step'}">
+      <td><b>#${row.frame}</b></td>
+      <td>${row.baseX} px</td>
+      <td>${row.noise > 0 ? '+' : ''}${row.noise} px</td>
+      <td><b>${row.dispX} px</b></td>
+      <td>${row.noise === 0 ? 'Center' : (row.noise > 0 ? '→ Right' : '← Left')}</td>
+    </tr>
+  `).join('');
+}
+
+cJ.playBtn = { click: () => { cJ.running = !cJ.running; } };
+cJ.stepBtn = { click: () => { cJ.running = false; cJStep(33); } };
+cJ.resetBtn = { click: () => { cJ.running = true; cJ.timeMs = 0; cJ.frame = 0; cJ.history = []; cJ.tableHistory = []; cJRender(); } };
+
+cJ.ampSlider.addEventListener('input', (e) => { document.getElementById('c_j_amp_val').textContent = `±${e.target.value} px`; });
+
+// =========================================================================
+//  CONCEPT 8: COMPOUND SHAPES & PULSING (Lesson 11)
+// =========================================================================
+const c7 = {
+  shape: 'HEART',
+  running: false,
+  timeMs: 0,
+  frame: 0,
+  explode: 0,
+  speed: 0.010,
+  history: [],
+  tableHistory: [],
+  maxHistory: 100,
+  oled: document.getElementById('c7_oled'),
+  graph: document.getElementById('c7_graph'),
+  oledCtx: document.getElementById('c7_oled').getContext('2d'),
+  graphCtx: document.getElementById('c7_graph').getContext('2d'),
+  heartBtn: document.getElementById('c7_btn_heart'),
+  archBtn: document.getElementById('c7_btn_arch'),
+  explodeSlider: document.getElementById('c7_explode'),
+  dynLine: document.getElementById('c7_dyn_line'),
+  tbody: document.getElementById('c7_table_body'),
+  narrative: document.getElementById('c7_narrative')
+};
+
+function c7Step(dt = 33) {
+  c7.timeMs += dt;
+  c7.frame++;
+  c7.explode = parseInt(c7.explodeSlider.value);
+
+  const scaleFactor = 10 + Math.round(3 * Math.sin(c7.timeMs * c7.speed));
+  c7.history.push({ time: c7.timeMs, s: scaleFactor });
+  if (c7.history.length > c7.maxHistory) c7.history.shift();
+
+  c7Render(scaleFactor);
+}
+
+function c7Render(scaleFactor=10) {
+  if (currentActiveConceptId === 'tab-compound') {
+    document.getElementById('sb_timer_val').textContent = `${c7.timeMs} ms (${c7.shape} s=${scaleFactor})`;
+  }
+
+  // 5x OLED
+  clearOledCanvas(c7.oledCtx);
+  const cx1 = 36, cx2 = 92, cy = 32;
+
+  if (c7.shape === 'HEART') {
+    [cx1, cx2].forEach(cx => {
+      const s = scaleFactor;
+      const r = Math.floor(s / 2) + 1;
+      const ex = c7.explode;
+
+      c7.oledCtx.fillStyle = '#00d4ff';
+      c7.oledCtx.beginPath();
+      c7.oledCtx.arc(cx - Math.floor(s/2) - ex, cy - Math.floor(s/4) - ex, r, 0, Math.PI * 2);
+      c7.oledCtx.fill();
+
+      c7.oledCtx.beginPath();
+      c7.oledCtx.arc(cx + Math.floor(s/2) + ex, cy - Math.floor(s/4) - ex, r, 0, Math.PI * 2);
+      c7.oledCtx.fill();
+
+      c7.oledCtx.beginPath();
+      c7.oledCtx.moveTo(cx - s - 1, cy - Math.floor(s/6) + ex);
+      c7.oledCtx.lineTo(cx + s + 1, cy - Math.floor(s/6) + ex);
+      c7.oledCtx.lineTo(cx, cy + s + ex * 1.5);
+      c7.oledCtx.closePath();
+      c7.oledCtx.fill();
+    });
+  } else {
+    [cx1, cx2].forEach(cx => {
+      c7.oledCtx.strokeStyle = '#00d4ff';
+      c7.oledCtx.lineWidth = 1;
+      for (let i = 0; i < 4; i++) {
+        c7.oledCtx.beginPath();
+        c7.oledCtx.arc(cx, cy + 8, 13 + i, 0, Math.PI * 2);
+        c7.oledCtx.stroke();
+      }
+      c7.oledCtx.fillStyle = c7.explode > 0 ? 'rgba(248, 81, 73, 0.7)' : '#010408';
+      c7.oledCtx.fillRect(cx - 20, cy + 8 + c7.explode, 41, 30);
+    });
+  }
+
+  // Graph
+  const gCtx = c7.graphCtx;
+  const gw = c7.graph.width, gh = c7.graph.height;
+  gCtx.fillStyle = '#04070d';
+  gCtx.fillRect(0, 0, gw, gh);
+
+  const midY = gh / 2;
+  gCtx.strokeStyle = '#d29922';
+  gCtx.setLineDash([4, 4]);
+  gCtx.beginPath();
+  gCtx.moveTo(40, midY); gCtx.lineTo(gw - 20, midY);
+  gCtx.stroke();
+  gCtx.setLineDash([]);
+
+  gCtx.strokeStyle = '#f85149';
+  gCtx.lineWidth = 2.5;
+  gCtx.beginPath();
+  c7.history.forEach((pt, i) => {
+    const px = 40 + (i / c7.maxHistory) * (gw - 60);
+    const py = midY - (pt.s - 10) * 16;
+    if (i === 0) gCtx.moveTo(px, py);
+    else gCtx.lineTo(px, py);
+  });
+  gCtx.stroke();
+
+  // Dynamic C++ Evaluation Line
+  c7.dynLine.innerHTML = `
+    s = 10 + (int)(3 * sin(<span class="dyn-cur">${(c7.timeMs * c7.speed).toFixed(2)}</span>)) = <span class="dyn-res">${scaleFactor} px</span> -> Lobe Radius = ${Math.floor(scaleFactor/2)+1} px
+  `;
+
+  // Table
+  if (c7.shape === 'HEART') {
+    c7.tbody.innerHTML = `
+      <tr class="current-step"><td>Left Lobe</td><td>fillCircle()</td><td>(cx - ${scaleFactor/2}, cy - ${scaleFactor/4})</td><td>radius = ${Math.floor(scaleFactor/2)+1}px</td></tr>
+      <tr class="current-step"><td>Right Lobe</td><td>fillCircle()</td><td>(cx + ${scaleFactor/2}, cy - ${scaleFactor/4})</td><td>radius = ${Math.floor(scaleFactor/2)+1}px</td></tr>
+      <tr class="current-step"><td>Bottom Tip</td><td>fillTriangle()</td><td>Inverted: (cx±${scaleFactor}, cy) to (cx, cy+${scaleFactor})</td><td>height = ${Math.floor(scaleFactor * 1.16)}px</td></tr>
+    `;
+  } else {
+    c7.tbody.innerHTML = `
+      <tr class="current-step"><td>Thick Ring</td><td>drawCircle() × 4</td><td>(cx, cy + 8)</td><td>radii = 13, 14, 15, 16px</td></tr>
+      <tr class="current-step"><td>Bottom Mask</td><td>fillRect(..., BLACK)</td><td>(cx - 20, cy + 8)</td><td>41 × 30px (cuts lower 180°)</td></tr>
+    `;
+  }
+}
+
+c7.playBtn = { click: () => { c7.running = !c7.running; } };
+c7.stepBtn = { click: () => { c7.shape = (c7.shape === 'HEART') ? 'ARCH' : 'HEART'; c7.heartBtn.classList.toggle('btn-play', c7.shape === 'HEART'); c7.archBtn.classList.toggle('btn-play', c7.shape === 'ARCH'); c7Render(); } };
+c7.resetBtn = { click: () => { c7.running = false; c7.timeMs = 0; c7.frame = 0; c7.history = []; c7Render(); } };
+
+c7.heartBtn.addEventListener('click', () => { c7.shape = 'HEART'; c7.heartBtn.classList.add('btn-play'); c7.archBtn.classList.remove('btn-play'); c7Render(); });
+c7.archBtn.addEventListener('click', () => { c7.shape = 'ARCH'; c7.archBtn.classList.add('btn-play'); c7.heartBtn.classList.remove('btn-play'); c7Render(); });
+c7.explodeSlider.addEventListener('input', (e) => { document.getElementById('c7_explode_val').textContent = `${e.target.value} px`; c7Render(); });
+
+// =========================================================================
+//  CONCEPT 9: PHASE & MODULO (Lesson 12)
+// =========================================================================
+const c8 = {
+  running: false,
+  timeMs: 0,
+  frame: 0,
+  speed: 40,
+  offset: 33,
+  oled: document.getElementById('c8_oled'),
+  graph: document.getElementById('c8_graph'),
+  oledCtx: document.getElementById('c8_oled').getContext('2d'),
+  graphCtx: document.getElementById('c8_graph').getContext('2d'),
+  speedSlider: document.getElementById('c8_speed'),
+  offsetSlider: document.getElementById('c8_offset'),
+  dynLine: document.getElementById('c8_dyn_line'),
+  tbody: document.getElementById('c8_table_body'),
+  narrative: document.getElementById('c8_narrative')
+};
+
+function c8Step(dt = 33) {
+  c8.timeMs += dt;
+  c8.frame++;
+  c8.speed = parseInt(c8.speedSlider.value);
+  c8.offset = parseInt(c8.offsetSlider.value);
+  c8Render();
+}
+
+function c8Render() {
+  if (currentActiveConceptId === 'tab-phase') {
+    document.getElementById('sb_timer_val').textContent = `${c8.timeMs} ms (Z's Floating)`;
+  }
+
+  // 5x OLED
+  clearOledCanvas(c8.oledCtx);
+  const sh = 3 + Math.round(2.5 + 2.5 * Math.sin(c8.timeMs * 0.003));
+  c8.oledCtx.fillStyle = '#00d4ff';
+  c8.oledCtx.beginPath();
+  c8.oledCtx.roundRect(36 - 16, 40 - Math.floor(sh/2), 32, sh, Math.min(10, Math.floor(sh/2)));
+  c8.oledCtx.roundRect(92 - 16, 40 - Math.floor(sh/2), 32, sh, Math.min(10, Math.floor(sh/2)));
+  c8.oledCtx.fill();
+
+  const phases = [];
+  for (let i = 0; i < 3; i++) {
+    const phase = Math.floor(c8.timeMs / c8.speed + i * c8.offset) % 100;
+    phases.push(phase);
+    const zx = 92 + Math.floor(phase / 6) + i * 4;
+    const zy = 28 - Math.floor(phase * 28 / 100);
+    c8.oledCtx.font = (i === 2) ? 'bold 12px monospace' : '8px monospace';
+    c8.oledCtx.fillText(i === 2 ? 'Z' : 'z', zx, zy);
+  }
+
+  // Graph
+  const gCtx = c8.graphCtx;
+  const gw = c8.graph.width, gh = c8.graph.height;
+  gCtx.fillStyle = '#04070d';
+  gCtx.fillRect(0, 0, gw, gh);
+
+  const graphH = 160, graphY = 60;
+  const periodPx = 140;
+
+  gCtx.strokeStyle = '#223044';
+  gCtx.lineWidth = 1.5;
+  gCtx.beginPath();
+  for (let x = 40; x < gw - 40; x++) {
+    const cycle = (x - 40) % periodPx;
+    const yVal = graphY + graphH - (cycle / periodPx) * graphH;
+    if (cycle === 0) {
+      gCtx.moveTo(x, graphY + graphH); gCtx.lineTo(x, graphY);
+    } else {
+      gCtx.lineTo(x, yVal);
+    }
+  }
+  gCtx.stroke();
+
+  const colors = ['#58a6ff', '#3fb950', '#bc8cff'];
+  for (let i = 0; i < 3; i++) {
+    const norm = phases[i] / 100;
+    const markerX = 40 + norm * periodPx + periodPx;
+    const markerY = graphY + graphH - norm * graphH;
+
+    gCtx.fillStyle = colors[i];
+    gCtx.beginPath();
+    gCtx.arc(markerX, markerY, 7, 0, Math.PI * 2);
+    gCtx.fill();
+  }
+
+  // Dynamic C++ Evaluation Line
+  c8.dynLine.innerHTML = `
+    Z0: phase = (<span class="dyn-cur">${phases[0]}</span>) % 100 = <span class="dyn-res">${phases[0]}</span> (zy = ${28 - Math.floor(phases[0]*28/100)} px) | Z1: <span class="dyn-res">${phases[1]}</span> | Z2: <span class="dyn-res">${phases[2]}</span>
+  `;
+
+  // Table
+  c8.tbody.innerHTML = phases.map((ph, i) => `
+    <tr class="current-step">
+      <td style="color:${colors[i]};"><b>Z${i} (i=${i})</b></td>
+      <td><b>${ph}</b></td>
+      <td>${ph}%</td>
+      <td>(92 + ${Math.floor(ph/6)+i*4}, ${28 - Math.floor(ph*28/100)})</td>
+      <td>${i === 2 ? 'Large "Z" (12px)' : 'Small "z" (8px)'}</td>
+    </tr>
+  `).join('');
+}
+
+c8.playBtn = { click: () => { c8.running = !c8.running; } };
+c8.stepBtn = { click: () => { c8.running = false; c8Step(33); } };
+c8.resetBtn = { click: () => { c8.running = false; c8.timeMs = 0; c8.frame = 0; c8Render(); } };
+
+c8.speedSlider.addEventListener('input', (e) => { document.getElementById('c8_speed_val').textContent = `${e.target.value} ms/step`; });
+c8.offsetSlider.addEventListener('input', (e) => { document.getElementById('c8_offset_val').textContent = `${e.target.value}%`; });
+
+// =========================================================================
+//  CONCEPT 10: COMPLETE MOCHI (FSM, Lessons 13-15)
+// =========================================================================
+const c9 = {
+  mood: 0,
+  running: true,
+  timeMs: 0,
+  frame: 0,
+  curX: 0, tgtX: 0,
+  curY: 0, tgtY: 0,
+  curW: 32, curH: 40,
+  openness: 1.0, tgtOpen: 1.0,
+  blinking: false,
+  blinkEnd: 0,
+  nextBlink: 2000,
+  nextLook: 1500,
+  holdUntil: 0,
+  oled: document.getElementById('c9_oled'),
+  graph: document.getElementById('c9_graph'),
+  oledCtx: document.getElementById('c9_oled').getContext('2d'),
+  graphCtx: document.getElementById('c9_graph').getContext('2d'),
+  flashBtn: document.getElementById('c9_btn_flash'),
+  dynLine: document.getElementById('c9_dyn_line'),
+  tbody: document.getElementById('c9_table_body'),
+  narrative: document.getElementById('c9_narrative')
+};
+
+const MOOD_NAMES = ['NORMAL', 'HAPPY', 'ANGRY', 'SAD', 'SLEEPY', 'LOVE'];
+
+function c9SetMood(m) {
+  c9.mood = m;
+  c9.holdUntil = c9.timeMs + 15000;
+  c9Render();
+}
+
+function c9Step(dt = 33) {
+  c9.timeMs += dt;
+  c9.frame++;
+
+  const canBlink = (c9.mood === 0 || c9.mood === 2 || c9.mood === 3);
+  if (!c9.blinking && canBlink && c9.timeMs >= c9.nextBlink) {
+    c9.blinking = true;
+    c9.blinkEnd = c9.timeMs + 130;
+  }
+  if (c9.blinking && c9.timeMs >= c9.blinkEnd) {
+    c9.blinking = false;
+    c9.nextBlink = c9.timeMs + 1500 + Math.random() * 3000;
+  }
+  c9.tgtOpen = c9.blinking ? 0.0 : 1.0;
+
+  if (c9.timeMs >= c9.nextLook) {
+    if (c9.mood === 0) {
+      if (Math.random() < 0.33) { c9.tgtX = 0; c9.tgtY = 0; }
+      else {
+        c9.tgtX = Math.floor(Math.random() * 21) - 10;
+        c9.tgtY = Math.floor(Math.random() * 13) - 6;
+      }
+      c9.nextLook = c9.timeMs + 1200 + Math.random() * 1500;
+    } else if (c9.mood === 3) {
+      c9.tgtX = Math.floor(Math.random() * 9) - 4;
+      c9.tgtY = 2;
+      c9.nextLook = c9.timeMs + 1500 + Math.random() * 1500;
+    } else {
+      c9.tgtX = 0; c9.tgtY = 0;
+      c9.nextLook = c9.timeMs + 1000;
+    }
+  }
+
+  let targetW = 32, targetH = 40;
+  if (c9.mood === 3) { targetW = 30; targetH = 32; }
+  c9.curW += (targetW - c9.curW) * 0.25;
+  c9.curH += (targetH - c9.curH) * 0.25;
+  c9.curX += (c9.tgtX - c9.curX) * 0.3;
+  c9.curY += (c9.tgtY - c9.curY) * 0.3;
+  c9.openness += (c9.tgtOpen - c9.openness) * 0.5;
+
+  c9Render();
+}
+
+function c9Render() {
+  if (currentActiveConceptId === 'tab-master') {
+    document.getElementById('sb_timer_val').textContent = `${MOOD_NAMES[c9.mood]} (${c9.timeMs} ms)`;
+  }
+
+  // 5x OLED
+  clearOledCanvas(c9.oledCtx);
+  const w = Math.round(c9.curW);
+  const h = Math.max(3, Math.round(c9.curH * c9.openness));
+  const cy = 32 + Math.round(c9.curY);
+  const dx = Math.round(c9.curX);
+
+  if (c9.mood === 0) {
+    c9.oledCtx.fillStyle = '#00d4ff';
+    c9.oledCtx.beginPath();
+    c9.oledCtx.roundRect(36 + dx - Math.floor(w/2), cy - Math.floor(h/2), w, h, Math.min(10, Math.floor(h/2)));
+    c9.oledCtx.roundRect(92 + dx - Math.floor(w/2), cy - Math.floor(h/2), w, h, Math.min(10, Math.floor(h/2)));
+    c9.oledCtx.fill();
+  } else if (c9.mood === 1) {
+    const bcy = 32 + Math.round(Math.sin(c9.timeMs * 0.012) * 3);
+    const eyeX = [36, 92];
+    c9.oledCtx.strokeStyle = '#00d4ff';
+    c9.oledCtx.lineWidth = 1;
+    for (let e = 0; e < 2; e++) {
+      for (let i = 0; i < 4; i++) {
+        c9.oledCtx.beginPath();
+        c9.oledCtx.arc(eyeX[e], bcy + 8, 13 + i, 0, Math.PI * 2);
+        c9.oledCtx.stroke();
+      }
+      c9.oledCtx.fillStyle = '#010408';
+      c9.oledCtx.fillRect(eyeX[e] - 20, bcy + 8, 41, 30);
+    }
+  } else if (c9.mood === 2) {
+    const lx = 36 + dx + (Math.floor(Math.random() * 5) - 2);
+    const rx = 92 + dx + (Math.floor(Math.random() * 5) - 2);
+    c9.oledCtx.fillStyle = '#00d4ff';
+    c9.oledCtx.beginPath();
+    c9.oledCtx.roundRect(lx - Math.floor(w/2), cy - Math.floor(h/2), w, h, Math.min(10, Math.floor(h/2)));
+    c9.oledCtx.roundRect(rx - Math.floor(w/2), cy - Math.floor(h/2), w, h, Math.min(10, Math.floor(h/2)));
+    c9.oledCtx.fill();
+
+    if (h >= 10) {
+      const top = cy - Math.floor(h / 2);
+      const drop = Math.floor(h * 4 / 10);
+      const lL = lx - Math.floor(w/2), lR = lx + Math.floor(w/2);
+      const rL = rx - Math.floor(w/2), rR = rx + Math.floor(w/2);
+      c9.oledCtx.fillStyle = '#010408';
+      c9.oledCtx.beginPath();
+      c9.oledCtx.moveTo(lL - 1, top - 1); c9.oledCtx.lineTo(lR + 1, top - 1); c9.oledCtx.lineTo(lR + 1, top + drop);
+      c9.oledCtx.closePath(); c9.oledCtx.fill();
+      c9.oledCtx.beginPath();
+      c9.oledCtx.moveTo(rL - 1, top - 1); c9.oledCtx.lineTo(rR + 1, top - 1); c9.oledCtx.lineTo(rL - 1, top + drop);
+      c9.oledCtx.closePath(); c9.oledCtx.fill();
+    }
+  } else if (c9.mood === 3) {
+    const lx = 36 + dx, rx = 92 + dx;
+    c9.oledCtx.fillStyle = '#00d4ff';
+    c9.oledCtx.beginPath();
+    c9.oledCtx.roundRect(lx - Math.floor(w/2), cy - Math.floor(h/2), w, h, Math.min(10, Math.floor(h/2)));
+    c9.oledCtx.roundRect(rx - Math.floor(w/2), cy - Math.floor(h/2), w, h, Math.min(10, Math.floor(h/2)));
+    c9.oledCtx.fill();
+
+    if (h >= 10) {
+      const top = cy - Math.floor(h / 2);
+      const drop = Math.floor(h * 5 / 10);
+      const lL = lx - Math.floor(w/2), lR = lx + Math.floor(w/2);
+      const rL = rx - Math.floor(w/2), rR = rx + Math.floor(w/2);
+      c9.oledCtx.fillStyle = '#010408';
+      c9.oledCtx.beginPath();
+      c9.oledCtx.moveTo(lL - 1, top - 1); c9.oledCtx.lineTo(lR + 1, top - 1); c9.oledCtx.lineTo(lL - 1, top + drop);
+      c9.oledCtx.closePath(); c9.oledCtx.fill();
+      c9.oledCtx.beginPath();
+      c9.oledCtx.moveTo(rL - 1, top - 1); c9.oledCtx.lineTo(rR + 1, top - 1); c9.oledCtx.lineTo(rR + 1, top + drop);
+      c9.oledCtx.closePath(); c9.oledCtx.fill();
+    }
+  } else if (c9.mood === 4) {
+    const sh = 3 + Math.round(2.5 + 2.5 * Math.sin(c9.timeMs * 0.003));
+    c9.oledCtx.fillStyle = '#00d4ff';
+    c9.oledCtx.beginPath();
+    c9.oledCtx.roundRect(36 - 16, 40 - Math.floor(sh/2), 32, sh, Math.min(10, Math.floor(sh/2)));
+    c9.oledCtx.roundRect(92 - 16, 40 - Math.floor(sh/2), 32, sh, Math.min(10, Math.floor(sh/2)));
+    c9.oledCtx.fill();
+    for (let i = 0; i < 3; i++) {
+      const phase = Math.floor(c9.timeMs / 40 + i * 33) % 100;
+      const zx = 92 + Math.floor(phase / 6) + i * 4;
+      const zy = 28 - Math.floor(phase * 28 / 100);
+      c9.oledCtx.font = (i === 2) ? 'bold 12px monospace' : '8px monospace';
+      c9.oledCtx.fillText(i === 2 ? 'Z' : 'z', zx, zy);
+    }
+  } else if (c9.mood === 5) {
+    const s = 10 + Math.round(3 * Math.sin(c9.timeMs * 0.01));
+    [36, 92].forEach(cx => {
+      const r = Math.floor(s / 2) + 1;
+      c9.oledCtx.fillStyle = '#00d4ff';
+      c9.oledCtx.beginPath();
+      c9.oledCtx.arc(cx - Math.floor(s/2), cy - Math.floor(s/4), r, 0, Math.PI * 2);
+      c9.oledCtx.arc(cx + Math.floor(s/2), cy - Math.floor(s/4), r, 0, Math.PI * 2);
+      c9.oledCtx.fill();
+      c9.oledCtx.beginPath();
+      c9.oledCtx.moveTo(cx - s - 1, cy - Math.floor(s/6));
+      c9.oledCtx.lineTo(cx + s + 1, cy - Math.floor(s/6));
+      c9.oledCtx.lineTo(cx, cy + s);
+      c9.oledCtx.closePath();
+      c9.oledCtx.fill();
+    });
+  }
+
+  // Graph
+  const gCtx = c9.graphCtx;
+  const gw = c9.graph.width, gh = c9.graph.height;
+  gCtx.fillStyle = '#04070d';
+  gCtx.fillRect(0, 0, gw, gh);
+
+  const states = [
+    { name: 'NORMAL', icon: '👀', x: 80,  y: 140, id: 0 },
+    { name: 'HAPPY',  icon: '😊', x: 220, y: 60,  id: 1 },
+    { name: 'ANGRY',  icon: '😠', x: 380, y: 60,  id: 2 },
+    { name: 'SAD',    icon: '😢', x: 380, y: 220, id: 3 },
+    { name: 'SLEEPY', icon: '💤', x: 220, y: 220, id: 4 },
+    { name: 'LOVE',   icon: '😍', x: 500, y: 140, id: 5 }
+  ];
+
+  states.forEach(s => {
+    if (s.id !== 0) {
+      gCtx.strokeStyle = (c9.mood === s.id) ? '#3fb950' : '#1b2533';
+      gCtx.lineWidth = (c9.mood === s.id) ? 2.5 : 1;
+      gCtx.beginPath();
+      gCtx.moveTo(states[0].x, states[0].y); gCtx.lineTo(s.x, s.y);
+      gCtx.stroke();
+    }
+  });
+
+  states.forEach(s => {
+    const isActive = (c9.mood === s.id);
+    gCtx.fillStyle = isActive ? '#0d2818' : '#111722';
+    gCtx.strokeStyle = isActive ? '#3fb950' : '#263142';
+    gCtx.lineWidth = isActive ? 3 : 1.5;
+
+    gCtx.beginPath();
+    gCtx.arc(s.x, s.y, 30, 0, Math.PI * 2);
+    gCtx.fill();
+    gCtx.stroke();
+
+    gCtx.font = '18px sans-serif';
+    gCtx.textAlign = 'center';
+    gCtx.fillStyle = '#fff';
+    gCtx.fillText(s.icon, s.x, s.y + 6);
+
+    gCtx.font = '10px monospace';
+    gCtx.fillStyle = isActive ? '#3fb950' : '#768390';
+    gCtx.fillText(s.name, s.x, s.y + 44);
+  });
+  gCtx.textAlign = 'left';
+
+  // Dynamic C++ Evaluation Line
+  const holdSec = Math.max(0, (c9.holdUntil - c9.timeMs) / 1000).toFixed(1);
+  c9.dynLine.innerHTML = `
+    Mood = <span class="dyn-cur">${MOOD_NAMES[c9.mood]}</span> | Gaze = (<span class="dyn-tgt">${c9.curX.toFixed(1)}</span>, <span class="dyn-tgt">${c9.curY.toFixed(1)}</span>) | Open = <span class="dyn-alpha">${c9.openness.toFixed(2)}</span> (${c9.holdUntil > c9.timeMs ? holdSec + 's hold' : 'auto'})
+  `;
+
+  // Table
+  c9.tbody.innerHTML = `
+    <tr class="current-step">
+      <td><b>${MOOD_NAMES[c9.mood]}</b></td>
+      <td>(${c9.curX.toFixed(1)}, ${c9.curY.toFixed(1)})</td>
+      <td>${w} × ${h} px</td>
+      <td>${c9.openness.toFixed(2)}</td>
+      <td>${c9.holdUntil > c9.timeMs ? holdSec + ' s left' : 'Auto cycle'}</td>
+    </tr>
+  `;
+}
+
+c9.playBtn = { click: () => { c9.running = !c9.running; } };
+c9.stepBtn = { click: () => { c9.running = false; c9Step(33); } };
+c9.resetBtn = { click: () => { c9.running = true; c9.timeMs = 0; c9.frame = 0; c9.mood = 0; c9Render(); } };
+
+c9.flashBtn.addEventListener('mousedown', () => {
+  c9SetMood(5);
+  c9.holdUntil = c9.timeMs + 3000;
+});
+c9.oled.addEventListener('click', (e) => {
+  const rect = c9.oled.getBoundingClientRect();
+  const clickX = (e.clientX - rect.left) * (128 / rect.width);
+  const clickY = (e.clientY - rect.top) * (64 / rect.height);
+  c9.tgtX = Math.round(clickX - 64);
+  c9.tgtY = Math.round(clickY - 32);
+  c9.nextLook = c9.timeMs + 3000;
+  c9Render();
+});
+
+// =========================================================================
+//  GLOBAL MASTER TICKER
+// =========================================================================
+let globalLastTime = performance.now();
+function masterLoop(timestamp) {
+  const dt = timestamp - globalLastTime;
+  if (dt >= 32) {
+    if (c1.running) c1Step(Math.round(dt));
+    if (c2.running) c2Step(Math.round(dt));
+    if (c3.running) c3Step(Math.round(dt));
+    if (c4.running) c4Step(Math.round(dt));
+    if (c5.running) c5Step(Math.round(dt));
+    if (cJ.running) cJStep(Math.round(dt));
+    if (c7.running) c7Step(Math.round(dt));
+    if (c8.running) c8Step(Math.round(dt));
+    if (c9.running) c9Step(Math.round(dt));
+    globalLastTime = timestamp;
+  }
+  requestAnimationFrame(masterLoop);
+}
+
+// Initial draw for all labs
+c1Render();
+c2Render();
+c3Render();
+c4Render();
+c5Render();
+c6Render();
+cJRender();
+c7Render();
+c8Render();
+c9Render();
+syncSidebarControls();
+requestAnimationFrame(masterLoop);
+</script>
+</body>
+</html>
+'''
+
+class VisualizerHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path in ('/', '/index.html'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            encoded = HTML_CONTENT.encode('utf-8')
+            self.send_header('Content-Length', str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+        else:
+            super().do_GET()
+
+    def log_message(self, format, *args):
+        pass
+
+def find_open_port(preferred_port=8050):
+    for port in range(preferred_port, preferred_port + 50):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('127.0.0.1', port))
+                return port
+        except OSError:
+            continue
+    return preferred_port
+
+def export_standalone_html(dest_path="mochi_interactive_explainer.html"):
+    out_file = Path(dest_path).resolve()
+    with open(out_file, 'w', encoding='utf-8') as f:
+        f.write(HTML_CONTENT)
+    print(f"✅ Standalone 5x OLED HTML visualizer saved to:\n   {out_file}")
+    return out_file
+
+def main():
+    parser = argparse.ArgumentParser(description="Dasai Mochi 5x OLED Concepts & Math Interactive Visualizer")
+    parser.add_argument("--port", type=int, default=8050, help="Port to serve the interactive web app (default: 8050)")
+    parser.add_argument("--no-browser", action="store_true", help="Do not automatically open the browser")
+    parser.add_argument("--html-only", action="store_true", help="Only export the standalone HTML file without running a server")
+    parser.add_argument("--out", type=str, default="mochi_interactive_explainer.html", help="HTML export filename")
+    args = parser.parse_args()
+
+    html_file = export_standalone_html(args.out)
+
+    if args.html_only:
+        print("\n✨ Done! You can double-click or open the HTML file directly in any web browser.")
+        return
+
+    port = find_open_port(args.port)
+    server_address = ('127.0.0.1', port)
+    
+    try:
+        httpd = HTTPServer(server_address, VisualizerHandler)
+    except Exception as e:
+        print(f"Could not bind to port {port}: {e}")
+        print(f"You can still view the interactive dashboard by opening:\n  file://{html_file}")
+        return
+
+    url = f"http://127.0.0.1:{port}"
+    print("\n" + "="*70)
+    print("🐱 DASAI MOCHI — 5x OLED (640x320) CONCEPT & MATHEMATICS LAB")
+    print("="*70)
+    print(f"🌐 Serving live interactive visualization at: {url}")
+    print(f"📄 Standalone offline file also available at: file://{html_file}")
+    print("⌨️  Press Ctrl+C to stop the server anytime.\n")
+
+    if not args.no_browser:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n👋 Server stopped. Goodbye!")
+    finally:
+        httpd.server_close()
+
+if __name__ == "__main__":
+    main()
