@@ -3,6 +3,8 @@ Media handling for Embedded Notebooks:
 Image and video attachment encoding/decoding, resource resolution,
 and integrated video player components for Markdown cells.
 """
+from __future__ import annotations
+
 import base64
 import hashlib
 import mimetypes
@@ -75,7 +77,7 @@ def detect_mime(path_or_name: str) -> str:
 # ---------------------------------------------------------------------------
 # Attachment encoding, decoding, and caching
 # ---------------------------------------------------------------------------
-_MEDIA_CACHE_DIR: Path | None = None
+_MEDIA_CACHE_DIR = None
 
 
 def get_media_cache_dir() -> Path:
